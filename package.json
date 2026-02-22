@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "docker:build": "docker build -t ee-referral .",
+    "docker:run": "docker run --rm -p 3000:3000 --env-file .env.local ee-referral"
   },
   "dependencies": {
     "jsonwebtoken": "^9.0.3",

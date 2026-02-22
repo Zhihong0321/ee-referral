@@ -60,6 +60,24 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000).
 
+## Docker / Railway
+
+This repo includes a production `Dockerfile` for Railway deployment.
+
+Local container commands:
+
+```bash
+npm run docker:build
+npm run docker:run
+```
+
+Railway environment variables to set:
+
+- `DATABASE_URL`
+- `JWT_SECRET`
+- `APP_BASE_URL`
+- `AUTH_HUB_URL`
+
 ## Auth flow used
 
 1. User enters app dashboard.
