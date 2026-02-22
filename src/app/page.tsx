@@ -1,65 +1,73 @@
-import Image from "next/image";
+import Link from "next/link";
+
+const STEPS = [
+  {
+    title: "1. Sign In With WhatsApp",
+    description:
+      "You log in once through Auth Hub at auth.atap.solar. Your secure auth cookie returns you to the referral dashboard.",
+  },
+  {
+    title: "2. Submit A Lead",
+    description:
+      "Only four fields are needed: lead name, mobile number, living region, and your relationship with the lead.",
+  },
+  {
+    title: "3. Track Lead Status",
+    description:
+      "You can monitor each referral from pending to won, and update lead details anytime from your dashboard.",
+  },
+];
 
 export default function Home() {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex min-h-screen w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+    <main className="mx-auto flex min-h-screen w-full max-w-6xl flex-col px-5 py-8 sm:px-8 sm:py-10">
+      <section className="hero-reveal card-glow relative overflow-hidden rounded-3xl border border-amber-200/70 bg-[linear-gradient(135deg,#fff7e8_0%,#ffffff_55%,#ecfffc_100%)] p-7 sm:p-10">
+        <div className="absolute -top-20 right-[-40px] h-52 w-52 rounded-full bg-amber-300/30 blur-3xl" aria-hidden />
+        <div className="absolute bottom-[-80px] left-[-60px] h-48 w-48 rounded-full bg-teal-300/30 blur-3xl" aria-hidden />
+
+        <p className="pill inline-flex w-fit items-center gap-2">Eternalgy Referral Program</p>
+        <h1 className="mt-4 max-w-3xl text-3xl leading-tight font-bold sm:text-5xl">
+          Earn <span className="text-amber-700">2% commission</span> for every successful project you refer.
+        </h1>
+        <p className="hero-reveal hero-delay mt-4 max-w-2xl text-base leading-7 text-slate-700 sm:text-lg">
+          Bring us qualified leads and we reward you with 2% of each project total amount. Start by signing in with
+          your WhatsApp account, then submit and manage referrals from one dashboard.
+        </p>
+
+        <div className="hero-reveal hero-delay-2 mt-7 flex flex-col gap-3 sm:flex-row">
+          <Link
+            href="/auth/start?return_to=/dashboard"
+            className="inline-flex items-center justify-center rounded-xl bg-amber-600 px-6 py-3 text-sm font-semibold text-white transition hover:bg-amber-700"
           >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+            Sign In With WhatsApp
+          </Link>
+          <Link
+            href="/dashboard"
+            className="inline-flex items-center justify-center rounded-xl border border-slate-300 bg-white px-6 py-3 text-sm font-semibold text-slate-800 transition hover:border-slate-400"
           >
-            Documentation
-          </a>
+            Open Dashboard
+          </Link>
         </div>
-      </main>
-    </div>
+      </section>
+
+      <section className="mt-8 grid gap-4 md:grid-cols-3">
+        {STEPS.map((step, index) => (
+          <article key={step.title} className="card-glow hero-reveal rounded-2xl border border-slate-200 bg-white p-5" style={{ animationDelay: `${0.1 + index * 0.08}s` }}>
+            <h2 className="text-lg font-semibold text-slate-900">{step.title}</h2>
+            <p className="mt-2 text-sm leading-6 text-slate-700">{step.description}</p>
+          </article>
+        ))}
+      </section>
+
+      <section className="hero-reveal mt-8 rounded-2xl border border-slate-200 bg-white p-6 sm:p-8">
+        <h3 className="text-2xl font-semibold text-slate-900">Program Notes</h3>
+        <ul className="mt-4 space-y-2 text-sm leading-6 text-slate-700 sm:text-base">
+          <li>Commission rate: 2% of each successful project total amount.</li>
+          <li>WhatsApp sign-in is mandatory before creating a referral account.</li>
+          <li>No full address is required for leads, only living region.</li>
+          <li>The dashboard supports adding and editing referrals anytime.</li>
+        </ul>
+      </section>
+    </main>
   );
 }

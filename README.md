@@ -1,36 +1,70 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# EE Referral Portal
 
-## Getting Started
+Next.js landing page + dashboard for a WhatsApp-first referral program.
 
-First, run the development server:
+## What this app does
+
+- Landing page that explains the referral program and 2% commission model.
+- WhatsApp sign-in via `https://auth.atap.solar` (Auth Hub flow with `auth_token` cookie).
+- Creates a referral account in DB (account name is `Referral`) without using the `user` table.
+- Add and edit referrals.
+- Dashboard to track referrals and lead status.
+
+## Data mapping used
+
+- Referral account:
+  - Stored in `customer` with `name='Referral'` and `remark='REFERRAL_ACCOUNT'`.
+- Referral lead:
+  - Stored in `customer` (`name`, `phone`, `state`, `lead_source='referral'`, relationship in `remark`, metadata in `notes`).
+- Referral tracking/status:
+  - Stored in `referral` (`name`, `mobile_number`, `relationship`, `status`, `linked_invoice` -> lead `customer.customer_id`).
+
+## Customer table fit check
+
+Existing `customer` columns already support:
+
+- Lead name: `name`
+- Lead mobile: `phone`
+- Lead living region: `state`
+
+Missing direct column:
+
+- `linked_referrer`
+
+Current behavior:
+
+- If `customer.linked_referrer` exists, app writes it.
+- If it does not exist (current DB), app stores linked referrer in `customer.notes` JSON metadata.
+
+## Environment
+
+Copy `.env.example` into `.env.local` and fill values:
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+cp .env.example .env.local
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Required:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+- `DATABASE_URL`
+- `JWT_SECRET` (must match Auth Hub JWT secret)
+- `APP_BASE_URL`
+- `AUTH_HUB_URL` (default: `https://auth.atap.solar`)
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Run
 
-## Learn More
+```bash
+npm install
+npm run dev
+```
 
-To learn more about Next.js, take a look at the following resources:
+Open [http://localhost:3000](http://localhost:3000).
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Auth flow used
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+1. User enters app dashboard.
+2. If `auth_token` cookie is missing/invalid, app redirects to Auth Hub:
+   - `https://auth.atap.solar/?return_to=<your-app-url>`
+3. User logs in by WhatsApp OTP at Auth Hub.
+4. Auth Hub redirects back.
+5. App verifies JWT from `auth_token` using shared `JWT_SECRET`.
