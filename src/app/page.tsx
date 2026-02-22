@@ -29,7 +29,10 @@ export default function Home() {
 
         <p className="pill inline-flex w-fit items-center gap-2">Eternalgy Referral Program</p>
         <h1 className="mt-4 max-w-3xl text-3xl leading-tight font-bold sm:text-5xl">
-          Earn <span className="text-amber-700">{REFERRAL_FEE_RATE} commission</span> for every successful project you refer.
+          Convert Your Contacts Into Cash.
+          <br />
+          Earn <span className="text-amber-700">{REFERRAL_FEE_RATE} commission</span> for every successful project you
+          refer.
         </h1>
         <p className="hero-reveal hero-delay mt-4 max-w-2xl text-base leading-7 text-slate-700 sm:text-lg">
           Bring us qualified leads and we reward you with {REFERRAL_FEE_RATE} of each project total amount. Start by
