@@ -5,8 +5,10 @@ Next.js landing page + dashboard for a WhatsApp-first referral program.
 ## What this app does
 
 - Landing page that explains the referral program and 2% commission model.
+- Standard Terms & Conditions page for the referral program.
 - WhatsApp sign-in via `https://auth.atap.solar` (Auth Hub flow with `auth_token` cookie).
 - Creates a referral account in DB (account name is `Referral`) without using the `user` table.
+- Referral profile update in dashboard: name, profile picture URL, banking account, banker name.
 - Add and edit referrals.
 - Dashboard to track referrals and lead status.
 

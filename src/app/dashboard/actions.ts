@@ -8,6 +8,7 @@ import {
   ReferralError,
   createReferral,
   findOrCreateReferrerAccount,
+  updateReferrerProfile,
   updateReferral,
 } from "@/lib/referrals";
 
@@ -42,6 +43,25 @@ export async function addReferralAction(formData: FormData) {
 
     revalidatePath("/dashboard");
     redirect("/dashboard?success=Referral+added");
+  } catch (error) {
+    const message = toErrorMessage(error);
+    redirect(`/dashboard?error=${encodeURIComponent(message)}`);
+  }
+}
+
+export async function updateProfileAction(formData: FormData) {
+  try {
+    const referrer = await getActionReferrer();
+
+    await updateReferrerProfile(referrer, {
+      displayName: String(formData.get("displayName") ?? ""),
+      profilePicture: String(formData.get("profilePicture") ?? ""),
+      bankAccount: String(formData.get("bankAccount") ?? ""),
+      bankerName: String(formData.get("bankerName") ?? ""),
+    });
+
+    revalidatePath("/dashboard");
+    redirect("/dashboard?success=Profile+updated");
   } catch (error) {
     const message = toErrorMessage(error);
     redirect(`/dashboard?error=${encodeURIComponent(message)}`);

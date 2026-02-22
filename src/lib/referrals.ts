@@ -23,6 +23,21 @@ const referralUpdateSchema = referralInputSchema.extend({
   status: z.enum(REFERRAL_STATUSES),
 });
 
+const referrerProfileSchema = z.object({
+  displayName: z.string().trim().min(2, "Name is required").max(80, "Name is too long"),
+  profilePicture: z
+    .string()
+    .trim()
+    .max(500, "Profile picture URL is too long")
+    .refine((value) => value === "" || URL.canParse(value), "Profile picture must be a valid URL"),
+  bankAccount: z
+    .string()
+    .trim()
+    .min(4, "Banking account is required")
+    .max(80, "Banking account is too long"),
+  bankerName: z.string().trim().min(2, "Banker name is required").max(80, "Banker name is too long"),
+});
+
 export class ReferralError extends Error {
   constructor(message: string) {
     super(message);
@@ -32,8 +47,11 @@ export class ReferralError extends Error {
 
 export type ReferrerAccount = {
   customerId: string;
-  name: string | null;
-  phone: string | null;
+  name: string;
+  phone: string;
+  profilePicture: string | null;
+  bankAccount: string;
+  bankerName: string;
 };
 
 export type ReferralRow = {
@@ -56,6 +74,21 @@ type Queryable = {
   query<T extends QueryResultRow>(text: string, params?: unknown[]): Promise<{ rows: T[] }>;
 };
 
+type ReferrerAccountRow = {
+  customer_id: string;
+  name: string | null;
+  phone: string | null;
+  profile_picture: string | null;
+  notes: string | null;
+  remark: string | null;
+};
+
+type ReferrerNotes = {
+  bankAccount?: string;
+  bankerName?: string;
+  [key: string]: unknown;
+};
+
 let cachedCustomerCapabilities: CustomerCapabilities | null = null;
 
 function randomId(prefix: string) {
@@ -65,6 +98,36 @@ function randomId(prefix: string) {
 
 function normalizePhone(phone: string) {
   return phone.replace(/\s+/g, "").trim();
+}
+
+function parseReferrerNotes(notes: string | null): ReferrerNotes {
+  if (!notes) {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(notes) as unknown;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as ReferrerNotes;
+    }
+  } catch {
+    return {};
+  }
+
+  return {};
+}
+
+function buildReferrerAccount(row: ReferrerAccountRow, fallbackPhone: string): ReferrerAccount {
+  const noteData = parseReferrerNotes(row.notes);
+
+  return {
+    customerId: row.customer_id,
+    name: row.name?.trim() || REFERRAL_ACCOUNT_NAME,
+    phone: row.phone?.trim() || fallbackPhone,
+    profilePicture: row.profile_picture,
+    bankAccount: typeof noteData.bankAccount === "string" ? noteData.bankAccount : "",
+    bankerName: typeof noteData.bankerName === "string" ? noteData.bankerName : "",
+  };
 }
 
 async function getCustomerCapabilities(executor: Queryable): Promise<CustomerCapabilities> {
@@ -97,13 +160,9 @@ export async function findOrCreateReferrerAccount(authUser: AuthHubUser): Promis
     throw new ReferralError("Your WhatsApp phone is missing from the auth token.");
   }
 
-  const existing = await query<{
-    customer_id: string;
-    name: string | null;
-    phone: string | null;
-  }>(
+  const existing = await query<ReferrerAccountRow>(
     `
-      SELECT customer_id, name, phone
+      SELECT customer_id, name, phone, profile_picture, notes, remark
       FROM customer
       WHERE phone = $1
         AND remark = ANY($2::text[])
@@ -114,12 +173,14 @@ export async function findOrCreateReferrerAccount(authUser: AuthHubUser): Promis
   );
 
   if (existing.rows.length > 0) {
-    if (existing.rows[0].name !== REFERRAL_ACCOUNT_NAME || existing.rows[0].phone !== phone) {
+    const current = existing.rows[0];
+
+    if (!current.name?.trim() || current.phone !== phone || current.remark !== REFERRAL_MARKER) {
       await query(
         `
           UPDATE customer
           SET
-            name = $1,
+            name = COALESCE(NULLIF(name, ''), $1),
             phone = $2,
             remark = $3,
             updated_by = $4,
@@ -131,31 +192,28 @@ export async function findOrCreateReferrerAccount(authUser: AuthHubUser): Promis
           phone,
           REFERRAL_MARKER,
           APP_ACTOR,
-          existing.rows[0].customer_id,
+          current.customer_id,
         ],
       );
+
+      current.name = current.name?.trim() || REFERRAL_ACCOUNT_NAME;
+      current.phone = phone;
+      current.remark = REFERRAL_MARKER;
     }
 
-    return {
-      customerId: existing.rows[0].customer_id,
-      name: REFERRAL_ACCOUNT_NAME,
-      phone,
-    };
+    return buildReferrerAccount(current, phone);
   }
 
   const generatedCustomerId = randomId("ref");
-  const fallbackName = REFERRAL_ACCOUNT_NAME;
   const notes = JSON.stringify({
     kind: "referral_account",
     source: "whatsapp_auth",
+    bankAccount: "",
+    bankerName: "",
     createdAt: new Date().toISOString(),
   });
 
-  const inserted = await query<{
-    customer_id: string;
-    name: string | null;
-    phone: string | null;
-  }>(
+  const inserted = await query<ReferrerAccountRow>(
     `
       INSERT INTO customer (
         customer_id,
@@ -168,16 +226,89 @@ export async function findOrCreateReferrerAccount(authUser: AuthHubUser): Promis
         updated_by
       )
       VALUES ($1, $2, $3, 'other', $4, $5, $6, $6)
-      RETURNING customer_id, name, phone
+      RETURNING customer_id, name, phone, profile_picture, notes, remark
     `,
-    [generatedCustomerId, fallbackName, phone, REFERRAL_MARKER, notes, APP_ACTOR],
+    [generatedCustomerId, REFERRAL_ACCOUNT_NAME, phone, REFERRAL_MARKER, notes, APP_ACTOR],
   );
 
-  return {
-    customerId: inserted.rows[0].customer_id,
-    name: inserted.rows[0].name,
-    phone: inserted.rows[0].phone,
-  };
+  return buildReferrerAccount(inserted.rows[0], phone);
+}
+
+export async function updateReferrerProfile(
+  referrer: ReferrerAccount,
+  input: z.input<typeof referrerProfileSchema>,
+): Promise<void> {
+  const parsed = referrerProfileSchema.safeParse(input);
+
+  if (!parsed.success) {
+    throw new ReferralError(parsed.error.issues[0]?.message || "Invalid profile input");
+  }
+
+  const pool = getPool();
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    const existing = await client.query<{
+      notes: string | null;
+    }>(
+      `
+        SELECT notes
+        FROM customer
+        WHERE customer_id = $1
+          AND remark = ANY($2::text[])
+        FOR UPDATE
+      `,
+      [referrer.customerId, [REFERRAL_MARKER, LEGACY_REFERRER_MARKER]],
+    );
+
+    if (existing.rows.length === 0) {
+      throw new ReferralError("Referral account not found.");
+    }
+
+    const mergedNotes: ReferrerNotes = {
+      ...parseReferrerNotes(existing.rows[0].notes),
+      kind: "referral_account",
+      bankAccount: parsed.data.bankAccount,
+      bankerName: parsed.data.bankerName,
+      updatedAt: new Date().toISOString(),
+    };
+
+    await client.query(
+      `
+        UPDATE customer
+        SET
+          name = $1,
+          profile_picture = $2,
+          notes = $3,
+          remark = $4,
+          updated_by = $5,
+          updated_at = NOW()
+        WHERE customer_id = $6
+      `,
+      [
+        parsed.data.displayName,
+        parsed.data.profilePicture || null,
+        JSON.stringify(mergedNotes),
+        REFERRAL_MARKER,
+        referrer.customerId,
+        referrer.customerId,
+      ],
+    );
+
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+
+    if (error instanceof ReferralError) {
+      throw error;
+    }
+
+    throw new ReferralError("Unable to update your profile right now.");
+  } finally {
+    client.release();
+  }
 }
 
 export async function listReferralsByReferrer(referrerCustomerId: string): Promise<ReferralRow[]> {

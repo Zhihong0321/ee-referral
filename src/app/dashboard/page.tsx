@@ -1,13 +1,18 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
-import { addReferralAction, editReferralAction } from "@/app/dashboard/actions";
+import {
+  addReferralAction,
+  editReferralAction,
+  updateProfileAction,
+} from "@/app/dashboard/actions";
 import { getCurrentAuthUser } from "@/lib/auth";
 import {
   REFERRAL_STATUSES,
   findOrCreateReferrerAccount,
   listReferralsByReferrer,
 } from "@/lib/referrals";
+import { COMPANY_LEGAL_NAME, REFERRAL_FEE_RATE } from "@/lib/terms";
 
 type DashboardPageProps = {
   searchParams: Promise<{
@@ -42,16 +47,22 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
     redirect("/auth/start?return_to=/dashboard");
   }
 
-  let referrerId = "";
-  let referrerName = authUser.name?.trim() || authUser.phone;
+  let referralId = "";
+  let referralName = authUser.name?.trim() || authUser.phone;
+  let profilePicture = "";
+  let bankAccount = "";
+  let bankerName = "";
   let referrals: Awaited<ReturnType<typeof listReferralsByReferrer>> = [];
   let loadError = "";
 
   try {
-    const referrer = await findOrCreateReferrerAccount(authUser);
-    referrerId = referrer.customerId;
-    referrerName = referrer.name?.trim() || referrerName;
-    referrals = await listReferralsByReferrer(referrer.customerId);
+    const referralAccount = await findOrCreateReferrerAccount(authUser);
+    referralId = referralAccount.customerId;
+    referralName = referralAccount.name?.trim() || referralName;
+    profilePicture = referralAccount.profilePicture || "";
+    bankAccount = referralAccount.bankAccount || "";
+    bankerName = referralAccount.bankerName || "";
+    referrals = await listReferralsByReferrer(referralAccount.customerId);
   } catch {
     loadError = "Unable to load your referral account. Check database write permissions and environment variables.";
   }
@@ -60,19 +71,40 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
     <main className="mx-auto flex min-h-screen w-full max-w-6xl flex-col px-5 py-8 sm:px-8 sm:py-10">
       <header className="card-glow hero-reveal rounded-2xl border border-slate-200 bg-white p-6 sm:p-8">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <p className="pill inline-flex w-fit">Referral Dashboard</p>
-            <h1 className="mt-3 text-2xl font-bold text-slate-900 sm:text-3xl">Welcome, {referrerName}</h1>
-            <p className="mt-2 text-sm text-slate-600">
-              WhatsApp: <span className="font-semibold text-slate-900">{authUser.phone}</span>
-            </p>
-            <p className="text-sm text-slate-600">
-              Referral Account ID: <span className="font-mono text-xs text-slate-800">{referrerId || "N/A"}</span>
-            </p>
+          <div className="flex items-start gap-4">
+            <div
+              className="flex h-14 w-14 items-center justify-center rounded-full border border-slate-300 bg-slate-100 text-lg font-bold text-slate-700"
+              style={
+                profilePicture
+                  ? {
+                      backgroundImage: `url(${profilePicture})`,
+                      backgroundSize: "cover",
+                      backgroundPosition: "center",
+                    }
+                  : undefined
+              }
+              aria-label="Referral profile picture"
+            >
+              {!profilePicture ? referralName.slice(0, 1).toUpperCase() : ""}
+            </div>
+
+            <div>
+              <p className="pill inline-flex w-fit">Referral Dashboard</p>
+              <h1 className="mt-3 text-2xl font-bold text-slate-900 sm:text-3xl">Welcome, {referralName}</h1>
+              <p className="mt-2 text-sm text-slate-600">
+                WhatsApp: <span className="font-semibold text-slate-900">{authUser.phone}</span>
+              </p>
+              <p className="text-sm text-slate-600">
+                Referral Account ID: <span className="font-mono text-xs text-slate-800">{referralId || "N/A"}</span>
+              </p>
+            </div>
           </div>
 
           <div className="flex flex-col items-start gap-2 sm:items-end">
-            <span className="pill">Commission: 2% per project total amount</span>
+            <span className="pill">Commission: {REFERRAL_FEE_RATE} per project total amount</span>
+            <Link href="/terms" className="text-sm font-semibold text-slate-700 hover:text-slate-900">
+              View Terms & Conditions
+            </Link>
             <Link href="/auth/logout" className="text-sm font-semibold text-teal-700 hover:text-teal-800">
               Logout
             </Link>
@@ -94,6 +126,79 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
         <section className="mt-6 rounded-2xl border border-rose-200 bg-rose-50 p-5 text-sm text-rose-800">{loadError}</section>
       ) : (
         <>
+          <section className="hero-reveal hero-delay mt-6 rounded-2xl border border-slate-200 bg-white p-6 sm:p-8">
+            <h2 className="text-xl font-semibold text-slate-900">Referral Profile</h2>
+            <p className="mt-2 text-sm text-slate-600">
+              Update your payout profile details. These fields are required for referral fee processing.
+            </p>
+
+            <form action={updateProfileAction} className="mt-5 grid gap-4 md:grid-cols-2">
+              <label className="text-sm text-slate-700">
+                Name
+                <input
+                  type="text"
+                  name="displayName"
+                  defaultValue={referralName}
+                  required
+                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 outline-none ring-amber-500 focus:ring"
+                  placeholder="Your full name"
+                />
+              </label>
+
+              <label className="text-sm text-slate-700">
+                Profile picture URL
+                <input
+                  type="url"
+                  name="profilePicture"
+                  defaultValue={profilePicture}
+                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 outline-none ring-amber-500 focus:ring"
+                  placeholder="https://example.com/photo.jpg"
+                />
+              </label>
+
+              <label className="text-sm text-slate-700">
+                Banking account
+                <input
+                  type="text"
+                  name="bankAccount"
+                  defaultValue={bankAccount}
+                  required
+                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 outline-none ring-amber-500 focus:ring"
+                  placeholder="Bank account number"
+                />
+              </label>
+
+              <label className="text-sm text-slate-700">
+                Banker name
+                <input
+                  type="text"
+                  name="bankerName"
+                  defaultValue={bankerName}
+                  required
+                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 outline-none ring-amber-500 focus:ring"
+                  placeholder="Bank name"
+                />
+              </label>
+
+              <div className="md:col-span-2">
+                <button
+                  type="submit"
+                  className="inline-flex items-center justify-center rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800"
+                >
+                  Update Profile
+                </button>
+              </div>
+            </form>
+          </section>
+
+          <section className="hero-reveal mt-6 rounded-2xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-900">
+            <p className="font-semibold">Terms Notice</p>
+            <p className="mt-1 leading-6">
+              {COMPANY_LEGAL_NAME} reserves the right to revise, withhold, offset, or cancel referral fee in case of
+              dispute, project cancellation, duplicate claim, or invalid submission.
+            </p>
+          </section>
+
           <section className="hero-reveal hero-delay mt-6 rounded-2xl border border-slate-200 bg-white p-6 sm:p-8">
             <h2 className="text-xl font-semibold text-slate-900">Add Referral Lead</h2>
             <p className="mt-2 text-sm text-slate-600">
