@@ -5,7 +5,9 @@ import { redirect } from "next/navigation";
 
 import { getCurrentAuthUser } from "@/lib/auth";
 import {
+  RELATIONSHIP_OPTIONS,
   ReferralError,
+  type RelationshipOption,
   createReferral,
   findOrCreateReferrerAccount,
   updateReferrerProfile,
@@ -18,6 +20,14 @@ function toErrorMessage(error: unknown) {
   }
 
   return "Something went wrong. Please try again.";
+}
+
+function normalizeRelationship(value: string): RelationshipOption {
+  if (RELATIONSHIP_OPTIONS.includes(value as RelationshipOption)) {
+    return value as RelationshipOption;
+  }
+
+  return "Other";
 }
 
 async function getActionReferrer() {
@@ -33,12 +43,13 @@ async function getActionReferrer() {
 export async function addReferralAction(formData: FormData) {
   try {
     const referrer = await getActionReferrer();
+    const relationship = normalizeRelationship(String(formData.get("relationship") ?? ""));
 
     await createReferral(referrer, {
       leadName: String(formData.get("leadName") ?? ""),
       leadMobileNumber: String(formData.get("leadMobileNumber") ?? ""),
       livingRegion: String(formData.get("livingRegion") ?? ""),
-      relationship: String(formData.get("relationship") ?? ""),
+      relationship,
     });
 
     revalidatePath("/dashboard");
@@ -71,13 +82,14 @@ export async function updateProfileAction(formData: FormData) {
 export async function editReferralAction(formData: FormData) {
   try {
     const referrer = await getActionReferrer();
+    const relationship = normalizeRelationship(String(formData.get("relationship") ?? ""));
 
     await updateReferral(referrer, {
       referralId: Number(formData.get("referralId") ?? "0"),
       leadName: String(formData.get("leadName") ?? ""),
       leadMobileNumber: String(formData.get("leadMobileNumber") ?? ""),
       livingRegion: String(formData.get("livingRegion") ?? ""),
-      relationship: String(formData.get("relationship") ?? ""),
+      relationship,
       status: String(formData.get("status") ?? "Pending") as
         | "Pending"
         | "Qualified"

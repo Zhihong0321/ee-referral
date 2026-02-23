@@ -8,6 +8,7 @@ import {
 } from "@/app/dashboard/actions";
 import { getCurrentAuthUser } from "@/lib/auth";
 import {
+  RELATIONSHIP_OPTIONS,
   REFERRAL_STATUSES,
   findOrCreateReferrerAccount,
   listReferralsByReferrer,
@@ -37,6 +38,18 @@ function statusClassName(status: string | null) {
   }
 
   return "status-badge status-pending";
+}
+
+function getRelationshipDefaultValue(relationship: string | null) {
+  if (!relationship) {
+    return "Other";
+  }
+
+  if (RELATIONSHIP_OPTIONS.includes(relationship as (typeof RELATIONSHIP_OPTIONS)[number])) {
+    return relationship;
+  }
+
+  return "Other";
 }
 
 export default async function DashboardPage({ searchParams }: DashboardPageProps) {
@@ -241,13 +254,18 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
 
               <label className="text-sm text-slate-700">
                 Relationship with lead
-                <input
-                  type="text"
+                <select
                   name="relationship"
                   required
                   className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 outline-none ring-amber-500 focus:ring"
-                  placeholder="e.g. Friend / Relative / Colleague"
-                />
+                  defaultValue="Friend"
+                >
+                  {RELATIONSHIP_OPTIONS.map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
               </label>
 
               <div className="md:col-span-2">
@@ -323,13 +341,18 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
 
                         <label className="text-sm text-slate-700">
                           Relationship
-                          <input
-                            type="text"
+                          <select
                             name="relationship"
-                            defaultValue={referral.relationship || ""}
+                            defaultValue={getRelationshipDefaultValue(referral.relationship)}
                             required
                             className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 outline-none ring-amber-500 focus:ring"
-                          />
+                          >
+                            {RELATIONSHIP_OPTIONS.map((option) => (
+                              <option key={option} value={option}>
+                                {option}
+                              </option>
+                            ))}
+                          </select>
                         </label>
 
                         <label className="text-sm text-slate-700 md:col-span-2">

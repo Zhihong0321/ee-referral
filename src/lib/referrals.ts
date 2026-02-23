@@ -10,12 +10,23 @@ const REFERRAL_ACCOUNT_NAME = "Referral";
 const APP_ACTOR = "referral_portal";
 
 export const REFERRAL_STATUSES = ["Pending", "Qualified", "Proposal", "Won", "Lost"] as const;
+export const RELATIONSHIP_OPTIONS = [
+  "Family",
+  "Friend",
+  "Colleague",
+  "Neighbor",
+  "Business Partner",
+  "Existing Customer",
+  "Community Contact",
+  "Other",
+] as const;
+export type RelationshipOption = (typeof RELATIONSHIP_OPTIONS)[number];
 
 const referralInputSchema = z.object({
   leadName: z.string().trim().min(2, "Lead name is required"),
   leadMobileNumber: z.string().trim().min(6, "Lead mobile number is required"),
   livingRegion: z.string().trim().min(2, "Living region is required"),
-  relationship: z.string().trim().min(2, "Relationship is required"),
+  relationship: z.enum(RELATIONSHIP_OPTIONS),
 });
 
 const referralUpdateSchema = referralInputSchema.extend({
