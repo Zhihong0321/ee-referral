@@ -1,8 +1,9 @@
 export const COMPANY_LEGAL_NAME = "Eternalgy Sdn Bhd";
 export const REFERRAL_FEE_RATE = "2%";
-export const COMMERCIAL_PROJECT_REFERRAL_FEE_RATE = "1%";
+export const SHOP_LOT_PROJECT_REFERRAL_FEE_RATE = "2%";
 export const RESIDENTIAL_PROJECT_REFERRAL_FEE_RATE = "2%";
-export const REFERRAL_FEE_RULE_SUMMARY = `Commercial project: ${COMMERCIAL_PROJECT_REFERRAL_FEE_RATE} of project cost. Residential project: ${RESIDENTIAL_PROJECT_REFERRAL_FEE_RATE} of project cost.`;
+export const FACTORY_PROJECT_REFERRAL_FEE_RATE = "1%";
+export const REFERRAL_FEE_RULE_SUMMARY = `Shop lot and Residential: ${RESIDENTIAL_PROJECT_REFERRAL_FEE_RATE} referral payout. Factory: ${FACTORY_PROJECT_REFERRAL_FEE_RATE} referral payout.`;
 export const REFERRAL_PAYOUT_RULE = "Payout is processed 30 days after installation is completed and the project is fully paid.";
 
 export const REFERRAL_TERMS = [
