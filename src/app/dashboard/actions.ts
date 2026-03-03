@@ -37,7 +37,7 @@ function normalizeProjectType(value: string): ProjectTypeOption {
     return value as ProjectTypeOption;
   }
 
-  return "Others";
+  return "OTHERS";
 }
 
 async function getActionReferrer() {

@@ -57,14 +57,14 @@ function getRelationshipDefaultValue(relationship: string | null) {
 
 function getProjectTypeDefaultValue(projectType: string | null) {
   if (!projectType) {
-    return "Residential";
+    return "RESIDENTIAL (2%)";
   }
 
   if (PROJECT_TYPE_OPTIONS.includes(projectType as (typeof PROJECT_TYPE_OPTIONS)[number])) {
     return projectType;
   }
 
-  return "Others";
+  return "OTHERS";
 }
 
 export default async function DashboardPage({ searchParams }: DashboardPageProps) {
@@ -281,7 +281,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
                   name="projectType"
                   required
                   className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 outline-none ring-amber-500 focus:ring"
-                  defaultValue="Residential"
+                  defaultValue="RESIDENTIAL (2%)"
                 >
                   {PROJECT_TYPE_OPTIONS.map((option) => (
                     <option key={option} value={option}>

@@ -21,7 +21,7 @@ export const RELATIONSHIP_OPTIONS = [
   "Other",
 ] as const;
 export type RelationshipOption = (typeof RELATIONSHIP_OPTIONS)[number];
-export const PROJECT_TYPE_OPTIONS = ["Residential", "Shop lot", "Factory", "Others"] as const;
+export const PROJECT_TYPE_OPTIONS = ["RESIDENTIAL (2%)", "SHOP-LOT (2%)", "FACTORY (1%)", "OTHERS"] as const;
 export type ProjectTypeOption = (typeof PROJECT_TYPE_OPTIONS)[number];
 
 const preferredAgentIdSchema = z
