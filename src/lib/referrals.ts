@@ -97,6 +97,9 @@ export type AgentOption = {
 
 type CustomerCapabilities = {
   hasLinkedReferrer: boolean;
+  hasReferralProjectType: boolean;
+  hasReferralLinkedAgent: boolean;
+  hasAgentTable: boolean;
 };
 
 type Queryable = {
@@ -164,18 +167,46 @@ async function getCustomerCapabilities(executor: Queryable): Promise<CustomerCap
     return cachedCustomerCapabilities;
   }
 
-  const result = await executor.query<{ has_linked_referrer: boolean }>(`
+  const result = await executor.query<{
+    has_linked_referrer: boolean;
+    has_referral_project_type: boolean;
+    has_referral_linked_agent: boolean;
+    has_agent_table: boolean;
+  }>(`
     SELECT EXISTS (
       SELECT 1
       FROM information_schema.columns
       WHERE table_schema = 'public'
         AND table_name = 'customer'
         AND column_name = 'linked_referrer'
-    ) AS has_linked_referrer
+    ) AS has_linked_referrer,
+    EXISTS (
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'referral'
+        AND column_name = 'project_type'
+    ) AS has_referral_project_type,
+    EXISTS (
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'referral'
+        AND column_name = 'linked_agent'
+    ) AS has_referral_linked_agent,
+    EXISTS (
+      SELECT 1
+      FROM information_schema.tables
+      WHERE table_schema = 'public'
+        AND table_name = 'agent'
+    ) AS has_agent_table
   `);
 
   const capabilities = {
     hasLinkedReferrer: result.rows[0]?.has_linked_referrer ?? false,
+    hasReferralProjectType: result.rows[0]?.has_referral_project_type ?? false,
+    hasReferralLinkedAgent: result.rows[0]?.has_referral_linked_agent ?? false,
+    hasAgentTable: result.rows[0]?.has_agent_table ?? false,
   };
 
   cachedCustomerCapabilities = capabilities;
@@ -341,6 +372,18 @@ export async function updateReferrerProfile(
 }
 
 export async function listReferralsByReferrer(referrerCustomerId: string): Promise<ReferralRow[]> {
+  const capabilities = await getCustomerCapabilities({ query });
+  const projectTypeSelect = capabilities.hasReferralProjectType ? "r.project_type" : "NULL::text AS project_type";
+  const preferredAgentIdSelect = capabilities.hasReferralLinkedAgent
+    ? "r.linked_agent AS preferred_agent_id"
+    : "NULL::text AS preferred_agent_id";
+  const preferredAgentNameSelect =
+    capabilities.hasReferralLinkedAgent && capabilities.hasAgentTable
+      ? "a.name AS preferred_agent_name"
+      : "NULL::text AS preferred_agent_name";
+  const agentJoin =
+    capabilities.hasReferralLinkedAgent && capabilities.hasAgentTable ? "LEFT JOIN agent a ON a.id::text = r.linked_agent" : "";
+
   const result = await query<{
     id: number;
     bubble_id: string;
@@ -363,15 +406,15 @@ export async function listReferralsByReferrer(referrerCustomerId: string): Promi
         r.mobile_number AS lead_mobile,
         c.state AS living_region,
         r.relationship,
-        r.project_type,
+        ${projectTypeSelect},
         r.status,
         r.linked_invoice AS lead_customer_id,
-        r.linked_agent AS preferred_agent_id,
-        a.name AS preferred_agent_name,
+        ${preferredAgentIdSelect},
+        ${preferredAgentNameSelect},
         r.created_at::text AS created_at
       FROM referral r
       LEFT JOIN customer c ON c.customer_id = r.linked_invoice
-      LEFT JOIN agent a ON a.id::text = r.linked_agent
+      ${agentJoin}
       WHERE r.linked_customer_profile = $1
       ORDER BY r.created_at DESC, r.id DESC
     `,
@@ -395,6 +438,12 @@ export async function listReferralsByReferrer(referrerCustomerId: string): Promi
 }
 
 export async function listAgentOptions(): Promise<AgentOption[]> {
+  const capabilities = await getCustomerCapabilities({ query });
+
+  if (!capabilities.hasAgentTable) {
+    return [];
+  }
+
   const result = await query<{
     id: number;
     name: string | null;
@@ -415,9 +464,14 @@ export async function listAgentOptions(): Promise<AgentOption[]> {
 }
 
 async function normalizePreferredAgentId(client: PoolClient, preferredAgentId: string): Promise<string | null> {
+  const capabilities = await getCustomerCapabilities(client);
   const normalized = preferredAgentId.trim();
 
   if (!normalized) {
+    return null;
+  }
+
+  if (!capabilities.hasAgentTable) {
     return null;
   }
 
@@ -506,32 +560,43 @@ export async function createReferral(
       customerValues,
     );
 
+    const referralColumns = [
+      "bubble_id",
+      "linked_customer_profile",
+      "name",
+      "relationship",
+      "mobile_number",
+      "status",
+      "linked_invoice",
+    ];
+    const referralValues: unknown[] = [
+      referralBubbleId,
+      referrer.customerId,
+      parsed.data.leadName,
+      parsed.data.relationship,
+      parsed.data.leadMobileNumber,
+      "Pending",
+      leadCustomerId,
+    ];
+
+    if (capabilities.hasReferralProjectType) {
+      referralColumns.push("project_type");
+      referralValues.push(parsed.data.projectType);
+    }
+
+    if (capabilities.hasReferralLinkedAgent) {
+      referralColumns.push("linked_agent");
+      referralValues.push(preferredAgentId);
+    }
+
+    const referralPlaceholders = referralValues.map((_, index) => `$${index + 1}`).join(", ");
+
     await client.query(
       `
-        INSERT INTO referral (
-          bubble_id,
-          linked_customer_profile,
-          name,
-          relationship,
-          project_type,
-          mobile_number,
-          status,
-          linked_agent,
-          linked_invoice
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        INSERT INTO referral (${referralColumns.join(", ")})
+        VALUES (${referralPlaceholders})
       `,
-      [
-        referralBubbleId,
-        referrer.customerId,
-        parsed.data.leadName,
-        parsed.data.relationship,
-        parsed.data.projectType,
-        parsed.data.leadMobileNumber,
-        "Pending",
-        preferredAgentId,
-        leadCustomerId,
-      ],
+      referralValues,
     );
 
     await client.query("COMMIT");
@@ -651,28 +716,35 @@ export async function updateReferral(
       throw new ReferralError("You can only edit your own referrals.");
     }
 
+    const setClauses = ["name = $1", "mobile_number = $2", "relationship = $3", "status = $4"];
+    const values: unknown[] = [
+      parsed.data.leadName,
+      parsed.data.leadMobileNumber,
+      parsed.data.relationship,
+      parsed.data.status,
+    ];
+
+    if ((await getCustomerCapabilities(client)).hasReferralProjectType) {
+      setClauses.push(`project_type = $${values.length + 1}`);
+      values.push(parsed.data.projectType);
+    }
+
+    if ((await getCustomerCapabilities(client)).hasReferralLinkedAgent) {
+      setClauses.push(`linked_agent = $${values.length + 1}`);
+      values.push(await normalizePreferredAgentId(client, parsed.data.preferredAgentId));
+    }
+
+    setClauses.push("updated_at = NOW()");
+    values.push(parsed.data.referralId);
+
     await client.query(
       `
         UPDATE referral
         SET
-          name = $1,
-          mobile_number = $2,
-          relationship = $3,
-          project_type = $4,
-          status = $5,
-          linked_agent = $6,
-          updated_at = NOW()
-        WHERE id = $7
+          ${setClauses.join(", ")}
+        WHERE id = $${values.length}
       `,
-      [
-        parsed.data.leadName,
-        parsed.data.leadMobileNumber,
-        parsed.data.relationship,
-        parsed.data.projectType,
-        parsed.data.status,
-        await normalizePreferredAgentId(client, parsed.data.preferredAgentId),
-        parsed.data.referralId,
-      ],
+      values,
     );
 
     if (existing.rows[0].linked_invoice) {

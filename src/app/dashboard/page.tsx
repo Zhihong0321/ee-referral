@@ -135,9 +135,9 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
             <Link href="/terms" className="text-sm font-semibold text-slate-700 hover:text-slate-900">
               View Terms & Conditions
             </Link>
-            <Link href="/auth/logout" className="text-sm font-semibold text-teal-700 hover:text-teal-800">
+            <a href="/auth/logout" className="text-sm font-semibold text-teal-700 hover:text-teal-800">
               Logout
-            </Link>
+            </a>
           </div>
         </div>
       </header>
