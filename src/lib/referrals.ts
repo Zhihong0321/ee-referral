@@ -22,11 +22,18 @@ export const RELATIONSHIP_OPTIONS = [
 ] as const;
 export type RelationshipOption = (typeof RELATIONSHIP_OPTIONS)[number];
 
+const preferredAgentIdSchema = z
+  .string()
+  .trim()
+  .max(20, "Preferred agent is invalid")
+  .refine((value) => value === "" || /^\d+$/.test(value), "Preferred agent is invalid");
+
 const referralInputSchema = z.object({
   leadName: z.string().trim().min(2, "Lead name is required"),
   leadMobileNumber: z.string().trim().min(6, "Lead mobile number is required"),
   livingRegion: z.string().trim().min(2, "Living region is required"),
   relationship: z.enum(RELATIONSHIP_OPTIONS),
+  preferredAgentId: preferredAgentIdSchema.optional().default(""),
 });
 
 const referralUpdateSchema = referralInputSchema.extend({
@@ -74,7 +81,14 @@ export type ReferralRow = {
   relationship: string | null;
   status: string | null;
   leadCustomerId: string | null;
+  preferredAgentId: string | null;
+  preferredAgentName: string | null;
   createdAt: string | null;
+};
+
+export type AgentOption = {
+  id: string;
+  name: string;
 };
 
 type CustomerCapabilities = {
@@ -332,6 +346,8 @@ export async function listReferralsByReferrer(referrerCustomerId: string): Promi
     relationship: string | null;
     status: string | null;
     lead_customer_id: string | null;
+    preferred_agent_id: string | null;
+    preferred_agent_name: string | null;
     created_at: string | null;
   }>(
     `
@@ -344,9 +360,12 @@ export async function listReferralsByReferrer(referrerCustomerId: string): Promi
         r.relationship,
         r.status,
         r.linked_invoice AS lead_customer_id,
+        r.linked_agent AS preferred_agent_id,
+        a.name AS preferred_agent_name,
         r.created_at::text AS created_at
       FROM referral r
       LEFT JOIN customer c ON c.customer_id = r.linked_invoice
+      LEFT JOIN agent a ON a.id::text = r.linked_agent
       WHERE r.linked_customer_profile = $1
       ORDER BY r.created_at DESC, r.id DESC
     `,
@@ -362,8 +381,54 @@ export async function listReferralsByReferrer(referrerCustomerId: string): Promi
     relationship: row.relationship,
     status: row.status,
     leadCustomerId: row.lead_customer_id,
+    preferredAgentId: row.preferred_agent_id,
+    preferredAgentName: row.preferred_agent_name,
     createdAt: row.created_at,
   }));
+}
+
+export async function listAgentOptions(): Promise<AgentOption[]> {
+  const result = await query<{
+    id: number;
+    name: string | null;
+  }>(
+    `
+      SELECT id, name
+      FROM agent
+      WHERE name IS NOT NULL
+        AND BTRIM(name) <> ''
+      ORDER BY name ASC
+    `,
+  );
+
+  return result.rows.map((row) => ({
+    id: String(row.id),
+    name: row.name!.trim(),
+  }));
+}
+
+async function normalizePreferredAgentId(client: PoolClient, preferredAgentId: string): Promise<string | null> {
+  const normalized = preferredAgentId.trim();
+
+  if (!normalized) {
+    return null;
+  }
+
+  const existing = await client.query<{ id: number }>(
+    `
+      SELECT id
+      FROM agent
+      WHERE id = $1
+      LIMIT 1
+    `,
+    [Number(normalized)],
+  );
+
+  if (existing.rows.length === 0) {
+    throw new ReferralError("Preferred agent was not found.");
+  }
+
+  return normalized;
 }
 
 export async function createReferral(
@@ -385,9 +450,11 @@ export async function createReferral(
     const capabilities = await getCustomerCapabilities(client);
     const leadCustomerId = randomId("cust");
     const referralBubbleId = randomId("reflead");
+    const preferredAgentId = await normalizePreferredAgentId(client, parsed.data.preferredAgentId);
     const metadata = {
       relationship: parsed.data.relationship,
       livingRegion: parsed.data.livingRegion,
+      preferredAgentId,
       linkedReferrer: referrer.customerId,
       syncedFromReferralPortal: true,
       createdAt: new Date().toISOString(),
@@ -440,9 +507,10 @@ export async function createReferral(
           relationship,
           mobile_number,
           status,
+          linked_agent,
           linked_invoice
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
       `,
       [
         referralBubbleId,
@@ -451,6 +519,7 @@ export async function createReferral(
         parsed.data.relationship,
         parsed.data.leadMobileNumber,
         "Pending",
+        preferredAgentId,
         leadCustomerId,
       ],
     );
@@ -476,9 +545,11 @@ async function updateLeadRecord(
   input: z.infer<typeof referralUpdateSchema>,
 ) {
   const capabilities = await getCustomerCapabilities(client);
+  const preferredAgentId = await normalizePreferredAgentId(client, input.preferredAgentId);
   const metadata = {
     relationship: input.relationship,
     livingRegion: input.livingRegion,
+    preferredAgentId,
     linkedReferrer: referrerCustomerId,
     syncedFromReferralPortal: true,
     updatedAt: new Date().toISOString(),
@@ -577,14 +648,16 @@ export async function updateReferral(
           mobile_number = $2,
           relationship = $3,
           status = $4,
+          linked_agent = $5,
           updated_at = NOW()
-        WHERE id = $5
+        WHERE id = $6
       `,
       [
         parsed.data.leadName,
         parsed.data.leadMobileNumber,
         parsed.data.relationship,
         parsed.data.status,
+        await normalizePreferredAgentId(client, parsed.data.preferredAgentId),
         parsed.data.referralId,
       ],
     );

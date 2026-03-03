@@ -50,6 +50,7 @@ export async function addReferralAction(formData: FormData) {
       leadMobileNumber: String(formData.get("leadMobileNumber") ?? ""),
       livingRegion: String(formData.get("livingRegion") ?? ""),
       relationship,
+      preferredAgentId: String(formData.get("preferredAgentId") ?? ""),
     });
 
     revalidatePath("/dashboard");
@@ -90,6 +91,7 @@ export async function editReferralAction(formData: FormData) {
       leadMobileNumber: String(formData.get("leadMobileNumber") ?? ""),
       livingRegion: String(formData.get("livingRegion") ?? ""),
       relationship,
+      preferredAgentId: String(formData.get("preferredAgentId") ?? ""),
       status: String(formData.get("status") ?? "Pending") as
         | "Pending"
         | "Qualified"

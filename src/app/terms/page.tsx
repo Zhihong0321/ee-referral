@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-import { COMPANY_LEGAL_NAME, REFERRAL_FEE_RATE, REFERRAL_TERMS } from "@/lib/terms";
+import { COMPANY_LEGAL_NAME, REFERRAL_FEE_RULE_SUMMARY, REFERRAL_TERMS } from "@/lib/terms";
 
 export default function TermsPage() {
   return (
@@ -12,7 +12,7 @@ export default function TermsPage() {
           Company: <span className="font-semibold text-slate-900">{COMPANY_LEGAL_NAME}</span>
         </p>
         <p className="text-sm text-slate-600">
-          Standard referral fee: <span className="font-semibold text-slate-900">{REFERRAL_FEE_RATE}</span> per successful project total amount.
+          Referral fee schedule: <span className="font-semibold text-slate-900">{REFERRAL_FEE_RULE_SUMMARY}</span>
         </p>
 
         <div className="mt-6 space-y-6">

@@ -15,7 +15,7 @@ const monoFont = Source_Code_Pro({
 
 export const metadata: Metadata = {
   title: "Eternalgy Referral Program",
-  description: "2% commission referral portal with WhatsApp sign-in",
+  description: "Referral portal with 1% commercial and 2% residential commission via WhatsApp sign-in",
 };
 
 export default function RootLayout({

@@ -1,12 +1,16 @@
 export const COMPANY_LEGAL_NAME = "Eternalgy Sdn Bhd";
 export const REFERRAL_FEE_RATE = "2%";
+export const COMMERCIAL_PROJECT_REFERRAL_FEE_RATE = "1%";
+export const RESIDENTIAL_PROJECT_REFERRAL_FEE_RATE = "2%";
+export const REFERRAL_FEE_RULE_SUMMARY = `Commercial project: ${COMMERCIAL_PROJECT_REFERRAL_FEE_RATE} of project cost. Residential project: ${RESIDENTIAL_PROJECT_REFERRAL_FEE_RATE} of project cost.`;
+export const REFERRAL_PAYOUT_RULE = "Payout is processed 30 days after installation is completed and the project is fully paid.";
 
 export const REFERRAL_TERMS = [
   {
     title: "Program Scope",
     items: [
       `${COMPANY_LEGAL_NAME} operates this referral program to reward approved external referrals for successful projects.`,
-      `The standard referral fee is ${REFERRAL_FEE_RATE} of the final project total amount that is fully paid and not cancelled.`,
+      REFERRAL_FEE_RULE_SUMMARY,
     ],
   },
   {
@@ -27,8 +31,8 @@ export const REFERRAL_TERMS = [
   {
     title: "Referral Fee and Payment",
     items: [
-      `Referral fee calculation is based on ${REFERRAL_FEE_RATE} of the project total amount after validation and internal approval.`,
-      "Payment timing and method are determined by company finance procedures and may require complete supporting information.",
+      REFERRAL_FEE_RULE_SUMMARY,
+      REFERRAL_PAYOUT_RULE,
       "Any tax obligations related to referral income remain the referrer's responsibility unless required otherwise by law.",
     ],
   },

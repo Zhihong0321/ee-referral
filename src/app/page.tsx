@@ -1,6 +1,7 @@
 import Link from "next/link";
 
-import { COMPANY_LEGAL_NAME, REFERRAL_FEE_RATE } from "@/lib/terms";
+import { COMPANY_LEGAL_NAME, REFERRAL_FEE_RATE, REFERRAL_FEE_RULE_SUMMARY, REFERRAL_PAYOUT_RULE } from "@/lib/terms";
+import BonusCountdown from "@/components/bonus-countdown";
 
 const STEPS = [
   {
@@ -31,12 +32,14 @@ export default function Home() {
         <h1 className="mt-4 max-w-3xl text-3xl leading-tight font-bold sm:text-5xl">
           Convert Your Contacts Into Cash.
           <br />
-          Earn <span className="text-amber-700">{REFERRAL_FEE_RATE} commission</span> for every successful project you
-          refer.
+          Earn <span className="text-amber-700">up to {REFERRAL_FEE_RATE} commission</span> for every successful
+          project you refer.
         </h1>
+        <BonusCountdown />
         <p className="hero-reveal hero-delay mt-4 max-w-2xl text-base leading-7 text-slate-700 sm:text-lg">
-          Bring us qualified leads and we reward you with {REFERRAL_FEE_RATE} of each project total amount. Start by
-          signing in with your WhatsApp account, then submit and manage referrals from one dashboard.
+          Bring us qualified leads and we reward you with up to {REFERRAL_FEE_RATE} commission. {REFERRAL_FEE_RULE_SUMMARY}{" "}
+          {REFERRAL_PAYOUT_RULE} Start by signing in with your WhatsApp account, then submit and manage referrals from
+          one dashboard.
         </p>
 
         <div className="hero-reveal hero-delay-2 mt-7 flex flex-col gap-3 sm:flex-row">
@@ -78,7 +81,8 @@ export default function Home() {
         <h3 className="text-2xl font-semibold text-slate-900">Program Notes</h3>
         <ul className="mt-4 space-y-2 text-sm leading-6 text-slate-700 sm:text-base">
           <li>Company legal name: {COMPANY_LEGAL_NAME}.</li>
-          <li>Commission rate: {REFERRAL_FEE_RATE} of each successful project total amount.</li>
+          <li>Commission rate: {REFERRAL_FEE_RULE_SUMMARY}</li>
+          <li>Payout timing: {REFERRAL_PAYOUT_RULE}</li>
           <li>WhatsApp sign-in is mandatory before creating a referral account.</li>
           <li>No full address is required for leads, only living region.</li>
           <li>The dashboard supports profile updates, adding and editing referrals.</li>
