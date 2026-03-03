@@ -8,6 +8,7 @@ import {
 } from "@/app/dashboard/actions";
 import { getCurrentAuthUser } from "@/lib/auth";
 import {
+  PROJECT_TYPE_OPTIONS,
   RELATIONSHIP_OPTIONS,
   REFERRAL_STATUSES,
   findOrCreateReferrerAccount,
@@ -52,6 +53,18 @@ function getRelationshipDefaultValue(relationship: string | null) {
   }
 
   return "Other";
+}
+
+function getProjectTypeDefaultValue(projectType: string | null) {
+  if (!projectType) {
+    return "Residential";
+  }
+
+  if (PROJECT_TYPE_OPTIONS.includes(projectType as (typeof PROJECT_TYPE_OPTIONS)[number])) {
+    return projectType;
+  }
+
+  return "Others";
 }
 
 export default async function DashboardPage({ searchParams }: DashboardPageProps) {
@@ -209,7 +222,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
           <section className="hero-reveal hero-delay mt-6 rounded-2xl border border-slate-200 bg-white p-6 sm:p-8">
             <h2 className="text-xl font-semibold text-slate-900">Add Referral Lead</h2>
             <p className="mt-2 text-sm text-slate-600">
-              Enter lead name, mobile number, living region, relationship, and preferred handling agent.
+              Enter lead name, mobile number, living region, relationship, project type, and preferred handling agent.
             </p>
 
             <form action={addReferralAction} className="mt-5 grid gap-4 md:grid-cols-2">
@@ -262,6 +275,22 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
                 </select>
               </label>
 
+              <label className="text-sm text-slate-700">
+                Project type
+                <select
+                  name="projectType"
+                  required
+                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 outline-none ring-amber-500 focus:ring"
+                  defaultValue="Residential"
+                >
+                  {PROJECT_TYPE_OPTIONS.map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
               <AgentSearchField agents={agents} />
 
               <div className="md:col-span-2">
@@ -293,6 +322,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
                         <p className="text-sm text-slate-600">
                           {referral.leadMobile || "-"} | {referral.livingRegion || "-"} | {referral.relationship || "-"}
                         </p>
+                        <p className="text-sm text-slate-600">Project type: {referral.projectType || "Not set"}</p>
                         <p className="text-sm text-slate-600">
                           Preferred agent: {referral.preferredAgentName || "Not selected"}
                         </p>
@@ -347,6 +377,22 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
                             className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 outline-none ring-amber-500 focus:ring"
                           >
                             {RELATIONSHIP_OPTIONS.map((option) => (
+                              <option key={option} value={option}>
+                                {option}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+
+                        <label className="text-sm text-slate-700">
+                          Project type
+                          <select
+                            name="projectType"
+                            defaultValue={getProjectTypeDefaultValue(referral.projectType)}
+                            required
+                            className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 outline-none ring-amber-500 focus:ring"
+                          >
+                            {PROJECT_TYPE_OPTIONS.map((option) => (
                               <option key={option} value={option}>
                                 {option}
                               </option>

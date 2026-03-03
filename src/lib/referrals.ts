@@ -21,6 +21,8 @@ export const RELATIONSHIP_OPTIONS = [
   "Other",
 ] as const;
 export type RelationshipOption = (typeof RELATIONSHIP_OPTIONS)[number];
+export const PROJECT_TYPE_OPTIONS = ["Residential", "Shop lot", "Factory", "Others"] as const;
+export type ProjectTypeOption = (typeof PROJECT_TYPE_OPTIONS)[number];
 
 const preferredAgentIdSchema = z
   .string()
@@ -33,6 +35,7 @@ const referralInputSchema = z.object({
   leadMobileNumber: z.string().trim().min(6, "Lead mobile number is required"),
   livingRegion: z.string().trim().min(2, "Living region is required"),
   relationship: z.enum(RELATIONSHIP_OPTIONS),
+  projectType: z.enum(PROJECT_TYPE_OPTIONS),
   preferredAgentId: preferredAgentIdSchema.optional().default(""),
 });
 
@@ -79,6 +82,7 @@ export type ReferralRow = {
   leadMobile: string | null;
   livingRegion: string | null;
   relationship: string | null;
+  projectType: string | null;
   status: string | null;
   leadCustomerId: string | null;
   preferredAgentId: string | null;
@@ -344,6 +348,7 @@ export async function listReferralsByReferrer(referrerCustomerId: string): Promi
     lead_mobile: string | null;
     living_region: string | null;
     relationship: string | null;
+    project_type: string | null;
     status: string | null;
     lead_customer_id: string | null;
     preferred_agent_id: string | null;
@@ -358,6 +363,7 @@ export async function listReferralsByReferrer(referrerCustomerId: string): Promi
         r.mobile_number AS lead_mobile,
         c.state AS living_region,
         r.relationship,
+        r.project_type,
         r.status,
         r.linked_invoice AS lead_customer_id,
         r.linked_agent AS preferred_agent_id,
@@ -379,6 +385,7 @@ export async function listReferralsByReferrer(referrerCustomerId: string): Promi
     leadMobile: row.lead_mobile,
     livingRegion: row.living_region,
     relationship: row.relationship,
+    projectType: row.project_type,
     status: row.status,
     leadCustomerId: row.lead_customer_id,
     preferredAgentId: row.preferred_agent_id,
@@ -453,6 +460,7 @@ export async function createReferral(
     const preferredAgentId = await normalizePreferredAgentId(client, parsed.data.preferredAgentId);
     const metadata = {
       relationship: parsed.data.relationship,
+      projectType: parsed.data.projectType,
       livingRegion: parsed.data.livingRegion,
       preferredAgentId,
       linkedReferrer: referrer.customerId,
@@ -505,18 +513,20 @@ export async function createReferral(
           linked_customer_profile,
           name,
           relationship,
+          project_type,
           mobile_number,
           status,
           linked_agent,
           linked_invoice
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
       `,
       [
         referralBubbleId,
         referrer.customerId,
         parsed.data.leadName,
         parsed.data.relationship,
+        parsed.data.projectType,
         parsed.data.leadMobileNumber,
         "Pending",
         preferredAgentId,
@@ -548,6 +558,7 @@ async function updateLeadRecord(
   const preferredAgentId = await normalizePreferredAgentId(client, input.preferredAgentId);
   const metadata = {
     relationship: input.relationship,
+    projectType: input.projectType,
     livingRegion: input.livingRegion,
     preferredAgentId,
     linkedReferrer: referrerCustomerId,
@@ -647,15 +658,17 @@ export async function updateReferral(
           name = $1,
           mobile_number = $2,
           relationship = $3,
-          status = $4,
-          linked_agent = $5,
+          project_type = $4,
+          status = $5,
+          linked_agent = $6,
           updated_at = NOW()
-        WHERE id = $6
+        WHERE id = $7
       `,
       [
         parsed.data.leadName,
         parsed.data.leadMobileNumber,
         parsed.data.relationship,
+        parsed.data.projectType,
         parsed.data.status,
         await normalizePreferredAgentId(client, parsed.data.preferredAgentId),
         parsed.data.referralId,

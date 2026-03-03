@@ -5,8 +5,10 @@ import { redirect } from "next/navigation";
 
 import { getCurrentAuthUser } from "@/lib/auth";
 import {
+  PROJECT_TYPE_OPTIONS,
   RELATIONSHIP_OPTIONS,
   ReferralError,
+  type ProjectTypeOption,
   type RelationshipOption,
   createReferral,
   findOrCreateReferrerAccount,
@@ -30,6 +32,14 @@ function normalizeRelationship(value: string): RelationshipOption {
   return "Other";
 }
 
+function normalizeProjectType(value: string): ProjectTypeOption {
+  if (PROJECT_TYPE_OPTIONS.includes(value as ProjectTypeOption)) {
+    return value as ProjectTypeOption;
+  }
+
+  return "Others";
+}
+
 async function getActionReferrer() {
   const user = await getCurrentAuthUser();
 
@@ -44,12 +54,14 @@ export async function addReferralAction(formData: FormData) {
   try {
     const referrer = await getActionReferrer();
     const relationship = normalizeRelationship(String(formData.get("relationship") ?? ""));
+    const projectType = normalizeProjectType(String(formData.get("projectType") ?? ""));
 
     await createReferral(referrer, {
       leadName: String(formData.get("leadName") ?? ""),
       leadMobileNumber: String(formData.get("leadMobileNumber") ?? ""),
       livingRegion: String(formData.get("livingRegion") ?? ""),
       relationship,
+      projectType,
       preferredAgentId: String(formData.get("preferredAgentId") ?? ""),
     });
 
@@ -84,6 +96,7 @@ export async function editReferralAction(formData: FormData) {
   try {
     const referrer = await getActionReferrer();
     const relationship = normalizeRelationship(String(formData.get("relationship") ?? ""));
+    const projectType = normalizeProjectType(String(formData.get("projectType") ?? ""));
 
     await updateReferral(referrer, {
       referralId: Number(formData.get("referralId") ?? "0"),
@@ -91,6 +104,7 @@ export async function editReferralAction(formData: FormData) {
       leadMobileNumber: String(formData.get("leadMobileNumber") ?? ""),
       livingRegion: String(formData.get("livingRegion") ?? ""),
       relationship,
+      projectType,
       preferredAgentId: String(formData.get("preferredAgentId") ?? ""),
       status: String(formData.get("status") ?? "Pending") as
         | "Pending"
