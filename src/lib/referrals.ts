@@ -100,6 +100,9 @@ type CustomerCapabilities = {
   hasReferralProjectType: boolean;
   hasReferralLinkedAgent: boolean;
   hasAgentTable: boolean;
+  hasAgentLinkedUserLogin: boolean;
+  hasUserTable: boolean;
+  hasUserAccessLevel: boolean;
 };
 
 type Queryable = {
@@ -172,6 +175,9 @@ async function getCustomerCapabilities(executor: Queryable): Promise<CustomerCap
     has_referral_project_type: boolean;
     has_referral_linked_agent: boolean;
     has_agent_table: boolean;
+    has_agent_linked_user_login: boolean;
+    has_user_table: boolean;
+    has_user_access_level: boolean;
   }>(`
     SELECT EXISTS (
       SELECT 1
@@ -199,7 +205,27 @@ async function getCustomerCapabilities(executor: Queryable): Promise<CustomerCap
       FROM information_schema.tables
       WHERE table_schema = 'public'
         AND table_name = 'agent'
-    ) AS has_agent_table
+    ) AS has_agent_table,
+    EXISTS (
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'agent'
+        AND column_name = 'linked_user_login'
+    ) AS has_agent_linked_user_login,
+    EXISTS (
+      SELECT 1
+      FROM information_schema.tables
+      WHERE table_schema = 'public'
+        AND table_name = 'user'
+    ) AS has_user_table,
+    EXISTS (
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'user'
+        AND column_name = 'access_level'
+    ) AS has_user_access_level
   `);
 
   const capabilities = {
@@ -207,6 +233,9 @@ async function getCustomerCapabilities(executor: Queryable): Promise<CustomerCap
     hasReferralProjectType: result.rows[0]?.has_referral_project_type ?? false,
     hasReferralLinkedAgent: result.rows[0]?.has_referral_linked_agent ?? false,
     hasAgentTable: result.rows[0]?.has_agent_table ?? false,
+    hasAgentLinkedUserLogin: result.rows[0]?.has_agent_linked_user_login ?? false,
+    hasUserTable: result.rows[0]?.has_user_table ?? false,
+    hasUserAccessLevel: result.rows[0]?.has_user_access_level ?? false,
   };
 
   cachedCustomerCapabilities = capabilities;
@@ -444,16 +473,21 @@ export async function listAgentOptions(): Promise<AgentOption[]> {
     return [];
   }
 
+  const canFilterSales =
+    capabilities.hasAgentLinkedUserLogin && capabilities.hasUserTable && capabilities.hasUserAccessLevel;
+
   const result = await query<{
     id: number;
     name: string | null;
   }>(
     `
-      SELECT id, name
-      FROM agent
-      WHERE name IS NOT NULL
-        AND BTRIM(name) <> ''
-      ORDER BY name ASC
+      SELECT a.id, a.name
+      FROM agent a
+      ${canFilterSales ? 'JOIN "user" u ON u.bubble_id = a.linked_user_login' : ""}
+      WHERE a.name IS NOT NULL
+        ${canFilterSales ? "AND EXISTS (SELECT 1 FROM unnest(u.access_level) AS x WHERE LOWER(x) LIKE '%sales%')" : ""}
+        AND BTRIM(a.name) <> ''
+      ORDER BY a.name ASC
     `,
   );
 
@@ -475,18 +509,23 @@ async function normalizePreferredAgentId(client: PoolClient, preferredAgentId: s
     return null;
   }
 
+  const canFilterSales =
+    capabilities.hasAgentLinkedUserLogin && capabilities.hasUserTable && capabilities.hasUserAccessLevel;
+
   const existing = await client.query<{ id: number }>(
     `
-      SELECT id
-      FROM agent
-      WHERE id = $1
+      SELECT a.id
+      FROM agent a
+      ${canFilterSales ? 'JOIN "user" u ON u.bubble_id = a.linked_user_login' : ""}
+      WHERE a.id = $1
+        ${canFilterSales ? "AND EXISTS (SELECT 1 FROM unnest(u.access_level) AS x WHERE LOWER(x) LIKE '%sales%')" : ""}
       LIMIT 1
     `,
     [Number(normalized)],
   );
 
   if (existing.rows.length === 0) {
-    throw new ReferralError("Preferred agent was not found.");
+    throw new ReferralError("Preferred agent was not found or is not in sales.");
   }
 
   return normalized;
