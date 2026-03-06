@@ -51,12 +51,8 @@ const referrerProfileSchema = z.object({
     .trim()
     .max(500, "Profile picture URL is too long")
     .refine((value) => value === "" || URL.canParse(value), "Profile picture must be a valid URL"),
-  bankAccount: z
-    .string()
-    .trim()
-    .min(4, "Banking account is required")
-    .max(80, "Banking account is too long"),
-  bankerName: z.string().trim().min(2, "Banker name is required").max(80, "Banker name is too long"),
+  bankAccount: z.string().trim().max(80, "Banking account is too long").optional().default(""),
+  bankerName: z.string().trim().max(80, "Banker name is too long").optional().default(""),
 });
 
 export class ReferralError extends Error {
