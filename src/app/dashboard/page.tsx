@@ -181,7 +181,6 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
                   type="text"
                   name="bankAccount"
                   defaultValue={bankAccount}
-                  required
                   className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 outline-none ring-amber-500 focus:ring"
                   placeholder="Bank account number"
                 />
@@ -193,7 +192,6 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
                   type="text"
                   name="bankerName"
                   defaultValue={bankerName}
-                  required
                   className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 outline-none ring-amber-500 focus:ring"
                   placeholder="Bank name"
                 />
