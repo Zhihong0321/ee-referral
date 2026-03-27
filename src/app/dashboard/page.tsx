@@ -1,43 +1,58 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import type { ReactNode } from "react";
 
 import {
   addReferralAction,
   editReferralAction,
   updateProfileAction,
+  updateReferralWorkflowAction,
 } from "@/app/dashboard/actions";
+import AgentSearchField from "@/components/agent-search-field";
 import { getCurrentAuthUser } from "@/lib/auth";
+import { findInternalAppUser, hasAnyAccessLevel } from "@/lib/internal-users";
 import {
   PROJECT_TYPE_OPTIONS,
-  RELATIONSHIP_OPTIONS,
   REFERRAL_STATUSES,
+  RELATIONSHIP_OPTIONS,
   findOrCreateReferrerAccount,
   listAgentOptions,
+  listAssignedReferrals,
+  listManagerReferralLeads,
   listReferralsByReferrer,
 } from "@/lib/referrals";
-import AgentSearchField from "@/components/agent-search-field";
 import { COMPANY_LEGAL_NAME, REFERRAL_FEE_RULE_SUMMARY, REFERRAL_PAYOUT_RULE } from "@/lib/terms";
 
 type DashboardPageProps = {
   searchParams: Promise<{
     success?: string;
     error?: string;
+    search?: string;
+    assignment?: string;
+    status?: string;
+    preferredAgentId?: string;
+    assignedAgentId?: string;
   }>;
+};
+
+type FlashMessagesProps = {
+  success?: string;
+  error?: string;
 };
 
 function statusClassName(status: string | null) {
   const normalized = (status || "Pending").toLowerCase();
 
-  if (normalized === "won") {
-    return "status-badge status-won";
+  if (normalized === "successful" || normalized === "won") {
+    return "status-badge status-success";
   }
 
-  if (normalized === "lost") {
-    return "status-badge status-lost";
+  if (normalized === "rejected" || normalized === "lost") {
+    return "status-badge status-danger";
   }
 
-  if (normalized === "qualified" || normalized === "proposal") {
-    return "status-badge status-qualified";
+  if (normalized === "qualified" || normalized === "contacted" || normalized === "assigned" || normalized === "proposal") {
+    return "status-badge status-info";
   }
 
   return "status-badge status-pending";
@@ -67,14 +82,302 @@ function getProjectTypeDefaultValue(projectType: string | null) {
   return "OTHERS";
 }
 
-export default async function DashboardPage({ searchParams }: DashboardPageProps) {
-  const params = await searchParams;
-  const authUser = await getCurrentAuthUser();
-
-  if (!authUser) {
-    redirect("/auth/start?return_to=/dashboard");
+function getStatusOptions(status: string | null) {
+  if (!status || REFERRAL_STATUSES.includes(status as (typeof REFERRAL_STATUSES)[number])) {
+    return REFERRAL_STATUSES;
   }
 
+  return [status, ...REFERRAL_STATUSES];
+}
+
+function formatLocation(state: string | null, city: string | null, address: string | null) {
+  const parts = [state, city, address].map((value) => value?.trim()).filter(Boolean);
+  return parts.length > 0 ? parts.join(" | ") : "Location not provided";
+}
+
+function FlashMessages({ success, error }: FlashMessagesProps) {
+  return (
+    <>
+      {success ? (
+        <p className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+          {success}
+        </p>
+      ) : null}
+
+      {error ? (
+        <p className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">{error}</p>
+      ) : null}
+    </>
+  );
+}
+
+function DashboardShell({
+  title,
+  subtitle,
+  badge,
+  children,
+}: {
+  title: string;
+  subtitle: string;
+  badge: string;
+  children: ReactNode;
+}) {
+  return (
+    <main className="mx-auto flex min-h-screen w-full max-w-6xl flex-col px-5 py-8 sm:px-8 sm:py-10">
+      <header className="card-glow hero-reveal rounded-2xl border border-slate-200 bg-white p-6 sm:p-8">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <p className="pill inline-flex w-fit">{badge}</p>
+            <h1 className="mt-3 text-2xl font-bold text-slate-900 sm:text-3xl">{title}</h1>
+            <p className="mt-2 max-w-3xl text-sm text-slate-600">{subtitle}</p>
+          </div>
+
+          <div className="flex flex-col items-start gap-2 sm:items-end">
+            <span className="pill">Commission: {REFERRAL_FEE_RULE_SUMMARY}</span>
+            <Link href="/terms" className="text-sm font-semibold text-slate-700 hover:text-slate-900">
+              View Terms & Conditions
+            </Link>
+            <a href="/auth/logout" className="text-sm font-semibold text-teal-700 hover:text-teal-800">
+              Logout
+            </a>
+          </div>
+        </div>
+      </header>
+
+      {children}
+    </main>
+  );
+}
+
+async function renderManagerDashboard(params: Awaited<DashboardPageProps["searchParams"]>, managerName: string) {
+  const assignment =
+    params.assignment === "assigned" || params.assignment === "unassigned" ? params.assignment : "";
+  const filters = {
+    search: params.search?.trim() || "",
+    assignment,
+    status: params.status?.trim() || "",
+    preferredAgentId: params.preferredAgentId?.trim() || "",
+    assignedAgentId: params.assignedAgentId?.trim() || "",
+  } as const;
+  const [agentOptions, referrals] = await Promise.all([listAgentOptions(), listManagerReferralLeads(filters)]);
+
+  return (
+    <DashboardShell
+      badge="Manager Queue"
+      title={`Referral Leads, ${managerName}`}
+      subtitle="Review all incoming referrals, filter the queue, and assign or reassign leads to internal agents."
+    >
+      <FlashMessages success={params.success} error={params.error} />
+
+      <section className="hero-reveal hero-delay mt-6 rounded-2xl border border-slate-200 bg-white p-6 sm:p-8">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="text-xl font-semibold text-slate-900">Filter Leads</h2>
+            <p className="mt-1 text-sm text-slate-600">Search by lead name or mobile number and refine by assignment or agent.</p>
+          </div>
+          <Link href="/dashboard" className="text-sm font-semibold text-teal-700 hover:text-teal-800">
+            Reset filters
+          </Link>
+        </div>
+
+        <form method="GET" className="mt-5 grid gap-4 md:grid-cols-2">
+          <label className="text-sm text-slate-700">
+            Search
+            <input
+              type="search"
+              name="search"
+              defaultValue={filters.search}
+              className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 outline-none ring-amber-500 focus:ring"
+              placeholder="Lead name or mobile number"
+            />
+          </label>
+
+          <label className="text-sm text-slate-700">
+            Assignment
+            <select
+              name="assignment"
+              defaultValue={filters.assignment}
+              className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 outline-none ring-amber-500 focus:ring"
+            >
+              <option value="">All leads</option>
+              <option value="unassigned">Unassigned only</option>
+              <option value="assigned">Assigned only</option>
+            </select>
+          </label>
+
+          <label className="text-sm text-slate-700">
+            Status
+            <select
+              name="status"
+              defaultValue={filters.status}
+              className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 outline-none ring-amber-500 focus:ring"
+            >
+              <option value="">All statuses</option>
+              {REFERRAL_STATUSES.map((status) => (
+                <option key={status} value={status}>
+                  {status}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <AgentSearchField
+            agents={agentOptions}
+            defaultAgentId={filters.preferredAgentId || null}
+            label="Preferred agent filter"
+            helperText="Leave blank to include every preferred agent."
+          />
+
+          <AgentSearchField
+            agents={agentOptions}
+            defaultAgentId={filters.assignedAgentId || null}
+            inputName="assignedAgentId"
+            label="Assigned agent filter"
+            helperText="Leave blank to include every assigned agent."
+          />
+
+          <div className="md:col-span-2">
+            <button
+              type="submit"
+              className="inline-flex items-center justify-center rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800"
+            >
+              Apply Filters
+            </button>
+          </div>
+        </form>
+      </section>
+
+      <section className="hero-reveal hero-delay-2 mt-6 rounded-2xl border border-slate-200 bg-white p-6 sm:p-8">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <h2 className="text-xl font-semibold text-slate-900">Lead Queue</h2>
+          <span className="pill">Visible leads: {referrals.length}</span>
+        </div>
+
+        {referrals.length === 0 ? (
+          <p className="mt-4 text-sm text-slate-600">No leads matched the current filters.</p>
+        ) : (
+          <div className="mt-5 grid gap-4">
+            {referrals.map((referral) => (
+              <article key={referral.id} className="rounded-xl border border-slate-200 bg-slate-50/50 p-4">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <h3 className="text-lg font-semibold text-slate-900">{referral.leadName}</h3>
+                    <p className="text-sm text-slate-600">
+                      {referral.leadMobile || "-"} | {referral.relationship || "-"} | {referral.projectType || "Not set"}
+                    </p>
+                    <p className="text-sm text-slate-600">Referrer: {referral.referrerCustomerName || referral.referrerCustomerId}</p>
+                    <p className="text-sm text-slate-600">
+                      Location: {formatLocation(referral.leadState, referral.leadCity, referral.leadAddress)}
+                    </p>
+                    <p className="text-sm text-slate-600">
+                      Preferred agent: {referral.preferredAgentName || "Not selected"}
+                    </p>
+                    <p className="text-sm text-slate-600">
+                      Assigned agent: {referral.assignedAgentName || "Not assigned"}
+                    </p>
+                    <p className="mt-1 text-xs text-slate-500">Submitted: {referral.createdAt || "Unknown"}</p>
+                  </div>
+                  <span className={statusClassName(referral.status)}>{referral.status || "Pending"}</span>
+                </div>
+
+                <form action={updateReferralWorkflowAction} className="mt-4 grid gap-3 md:grid-cols-2">
+                  <input type="hidden" name="referralId" value={referral.id} />
+                  <AgentSearchField
+                    agents={agentOptions}
+                    defaultAgentId={referral.assignedAgentId}
+                    inputName="assignedAgentId"
+                    label="Assign agent"
+                    helperText="Leave blank to keep this lead unassigned."
+                  />
+                  <label className="text-sm text-slate-700">
+                    Status
+                    <select
+                      name="status"
+                      defaultValue={referral.status || "Pending"}
+                      className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 outline-none ring-amber-500 focus:ring"
+                    >
+                      {getStatusOptions(referral.status).map((status) => (
+                        <option key={status} value={status}>
+                          {status}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <div className="md:col-span-2">
+                    <button
+                      type="submit"
+                      className="inline-flex items-center justify-center rounded-lg bg-teal-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-teal-800"
+                    >
+                      Save Assignment
+                    </button>
+                  </div>
+                </form>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
+    </DashboardShell>
+  );
+}
+
+async function renderAgentDashboard(
+  params: Awaited<DashboardPageProps["searchParams"]>,
+  agentName: string,
+  agentId: string,
+) {
+  const referrals = await listAssignedReferrals(agentId);
+
+  return (
+    <DashboardShell
+      badge="Assigned Leads"
+      title={`Your Referral Leads, ${agentName}`}
+      subtitle="This view only shows referral leads assigned to you by management."
+    >
+      <FlashMessages success={params.success} error={params.error} />
+
+      <section className="hero-reveal hero-delay mt-6 rounded-2xl border border-slate-200 bg-white p-6 sm:p-8">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <h2 className="text-xl font-semibold text-slate-900">Assigned Queue</h2>
+          <span className="pill">Your leads: {referrals.length}</span>
+        </div>
+
+        {referrals.length === 0 ? (
+          <p className="mt-4 text-sm text-slate-600">No referral leads are assigned to you yet.</p>
+        ) : (
+          <div className="mt-5 grid gap-4">
+            {referrals.map((referral) => (
+              <article key={referral.id} className="rounded-xl border border-slate-200 bg-slate-50/50 p-4">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <h3 className="text-lg font-semibold text-slate-900">{referral.leadName}</h3>
+                    <p className="text-sm text-slate-600">
+                      {referral.leadMobile || "-"} | {referral.relationship || "-"} | {referral.projectType || "Not set"}
+                    </p>
+                    <p className="text-sm text-slate-600">Referrer: {referral.referrerCustomerName || referral.referrerCustomerId}</p>
+                    <p className="text-sm text-slate-600">
+                      Location: {formatLocation(referral.leadState, referral.leadCity, referral.leadAddress)}
+                    </p>
+                    <p className="text-sm text-slate-600">
+                      Preferred agent: {referral.preferredAgentName || "Not selected"}
+                    </p>
+                    <p className="mt-1 text-xs text-slate-500">Submitted: {referral.createdAt || "Unknown"}</p>
+                  </div>
+                  <span className={statusClassName(referral.status)}>{referral.status || "Pending"}</span>
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
+    </DashboardShell>
+  );
+}
+
+async function renderReferrerDashboard(
+  params: Awaited<DashboardPageProps["searchParams"]>,
+  authUser: NonNullable<Awaited<ReturnType<typeof getCurrentAuthUser>>>,
+) {
   let referralId = "";
   let referralName = authUser.name?.trim() || authUser.phone;
   let profilePicture = "";
@@ -91,8 +394,10 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
     profilePicture = referralAccount.profilePicture || "";
     bankAccount = referralAccount.bankAccount || "";
     bankerName = referralAccount.bankerName || "";
-    referrals = await listReferralsByReferrer(referralAccount.customerId);
-    agents = await listAgentOptions();
+    [referrals, agents] = await Promise.all([
+      listReferralsByReferrer(referralAccount.customerId),
+      listAgentOptions(),
+    ]);
   } catch {
     loadError = "Unable to load your referral account. Check database write permissions and environment variables.";
   }
@@ -142,15 +447,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
         </div>
       </header>
 
-      {params.success ? (
-        <p className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
-          {params.success}
-        </p>
-      ) : null}
-
-      {params.error ? (
-        <p className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">{params.error}</p>
-      ) : null}
+      <FlashMessages success={params.success} error={params.error} />
 
       {loadError ? (
         <section className="mt-6 rounded-2xl border border-rose-200 bg-rose-50 p-5 text-sm text-rose-800">{loadError}</section>
@@ -220,7 +517,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
           <section className="hero-reveal hero-delay mt-6 rounded-2xl border border-slate-200 bg-white p-6 sm:p-8">
             <h2 className="text-xl font-semibold text-slate-900">Add Referral Lead</h2>
             <p className="mt-2 text-sm text-slate-600">
-              Enter lead name, mobile number, living region, relationship, project type, and preferred handling agent.
+              Enter the lead details, location, relationship, project type, and your preferred handling agent.
             </p>
 
             <form action={addReferralAction} className="mt-5 grid gap-4 md:grid-cols-2">
@@ -247,13 +544,33 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
               </label>
 
               <label className="text-sm text-slate-700">
-                Living region
+                State
                 <input
                   type="text"
-                  name="livingRegion"
+                  name="leadState"
                   required
                   className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 outline-none ring-amber-500 focus:ring"
+                  placeholder="e.g. Selangor"
+                />
+              </label>
+
+              <label className="text-sm text-slate-700">
+                City
+                <input
+                  type="text"
+                  name="leadCity"
+                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 outline-none ring-amber-500 focus:ring"
                   placeholder="e.g. Shah Alam"
+                />
+              </label>
+
+              <label className="text-sm text-slate-700 md:col-span-2">
+                Address
+                <input
+                  type="text"
+                  name="leadAddress"
+                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 outline-none ring-amber-500 focus:ring"
+                  placeholder="Optional full address"
                 />
               </label>
 
@@ -317,12 +634,18 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
                     <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                       <div>
                         <h3 className="text-lg font-semibold text-slate-900">{referral.leadName}</h3>
+                        <p className="text-sm text-slate-600">{referral.leadMobile || "-"}</p>
                         <p className="text-sm text-slate-600">
-                          {referral.leadMobile || "-"} | {referral.livingRegion || "-"} | {referral.relationship || "-"}
+                          {formatLocation(referral.leadState, referral.leadCity, referral.leadAddress)}
                         </p>
-                        <p className="text-sm text-slate-600">Project type: {referral.projectType || "Not set"}</p>
+                        <p className="text-sm text-slate-600">
+                          Relationship: {referral.relationship || "-"} | Project type: {referral.projectType || "Not set"}
+                        </p>
                         <p className="text-sm text-slate-600">
                           Preferred agent: {referral.preferredAgentName || "Not selected"}
+                        </p>
+                        <p className="text-sm text-slate-600">
+                          Assigned agent: {referral.assignedAgentName || "Not assigned yet"}
                         </p>
                       </div>
                       <span className={statusClassName(referral.status)}>{referral.status || "Pending"}</span>
@@ -356,12 +679,32 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
                         </label>
 
                         <label className="text-sm text-slate-700">
-                          Living region
+                          State
                           <input
                             type="text"
-                            name="livingRegion"
-                            defaultValue={referral.livingRegion || ""}
+                            name="leadState"
+                            defaultValue={referral.leadState || ""}
                             required
+                            className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 outline-none ring-amber-500 focus:ring"
+                          />
+                        </label>
+
+                        <label className="text-sm text-slate-700">
+                          City
+                          <input
+                            type="text"
+                            name="leadCity"
+                            defaultValue={referral.leadCity || ""}
+                            className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 outline-none ring-amber-500 focus:ring"
+                          />
+                        </label>
+
+                        <label className="text-sm text-slate-700 md:col-span-2">
+                          Address
+                          <input
+                            type="text"
+                            name="leadAddress"
+                            defaultValue={referral.leadAddress || ""}
                             className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 outline-none ring-amber-500 focus:ring"
                           />
                         </label>
@@ -404,21 +747,6 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
                           label="Preferred Agent to Handle LEAD"
                         />
 
-                        <label className="text-sm text-slate-700 md:col-span-2">
-                          Lead status
-                          <select
-                            name="status"
-                            defaultValue={referral.status || "Pending"}
-                            className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 outline-none ring-amber-500 focus:ring"
-                          >
-                            {REFERRAL_STATUSES.map((status) => (
-                              <option key={status} value={status}>
-                                {status}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-
                         <div className="md:col-span-2">
                           <button
                             type="submit"
@@ -438,4 +766,25 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
       )}
     </main>
   );
+}
+
+export default async function DashboardPage({ searchParams }: DashboardPageProps) {
+  const params = await searchParams;
+  const authUser = await getCurrentAuthUser();
+
+  if (!authUser) {
+    redirect("/auth/start?return_to=/dashboard");
+  }
+
+  const internalUser = await findInternalAppUser(authUser);
+
+  if (internalUser && hasAnyAccessLevel(internalUser.accessLevels, ["HR", "KC"])) {
+    return renderManagerDashboard(params, internalUser.name);
+  }
+
+  if (internalUser?.agentId) {
+    return renderAgentDashboard(params, internalUser.agentName || internalUser.name, internalUser.agentId);
+  }
+
+  return renderReferrerDashboard(params, authUser);
 }

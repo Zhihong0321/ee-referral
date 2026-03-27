@@ -9,17 +9,18 @@ Next.js landing page + dashboard for a WhatsApp-first referral program.
 - WhatsApp sign-in via `https://auth.atap.solar` (Auth Hub flow with `auth_token` cookie).
 - Creates a referral account in DB (account name is `Referral`) without using the `user` table.
 - Referral profile update in dashboard: name, profile picture URL, banking account, banker name.
-- Add and edit referrals.
-- Dashboard to track referrals and lead status.
+- Referrer dashboard to add and edit referrals with state, city, address, project type, and preferred agent.
+- Manager queue for HR/KC users to filter all referral leads and assign or reassign agents.
+- Agent dashboard that only shows referral leads assigned to the logged-in agent.
 
 ## Data mapping used
 
 - Referral account:
   - Stored in `customer` with `name='Referral'` and `remark='REFERRAL_ACCOUNT'`.
 - Referral lead:
-  - Stored in `customer` (`name`, `phone`, `state`, `lead_source='referral'`, relationship in `remark`, metadata in `notes`).
-- Referral tracking/status:
-  - Stored in `referral` (`name`, `mobile_number`, `relationship`, `status`, `linked_invoice` -> lead `customer.customer_id`).
+  - Stored in `customer` (`name`, `phone`, `state`, `city`, `address`, `lead_source='referral'`, relationship in `remark`, metadata in `notes`).
+- Referral workflow:
+  - Stored in `referral` (`name`, `mobile_number`, `relationship`, `status`, `linked_invoice` -> lead `customer.customer_id`, `linked_agent` as preferred agent, `assigned_agent` as manager-owned assignment, optional denormalized location columns).
 
 ## Customer table fit check
 
@@ -27,7 +28,9 @@ Existing `customer` columns already support:
 
 - Lead name: `name`
 - Lead mobile: `phone`
-- Lead living region: `state`
+- Lead state: `state`
+- Lead city: `city`
+- Lead address: `address`
 
 Missing direct column:
 
@@ -37,6 +40,8 @@ Current behavior:
 
 - If `customer.linked_referrer` exists, app writes it.
 - If it does not exist (current DB), app stores linked referrer in `customer.notes` JSON metadata.
+- Manager authorization uses `user.access_level` and the HR/KC tags.
+- Agent assignment is stored separately from the referrer's preferred agent.
 
 ## Environment
 

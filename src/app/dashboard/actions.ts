@@ -4,16 +4,20 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 import { getCurrentAuthUser } from "@/lib/auth";
+import { findInternalAppUser, hasAnyAccessLevel } from "@/lib/internal-users";
 import {
   PROJECT_TYPE_OPTIONS,
+  REFERRAL_STATUSES,
   RELATIONSHIP_OPTIONS,
   ReferralError,
   type ProjectTypeOption,
   type RelationshipOption,
+  type ReferralStatus,
   createReferral,
   findOrCreateReferrerAccount,
-  updateReferrerProfile,
   updateReferral,
+  updateReferralManagerWorkflow,
+  updateReferrerProfile,
 } from "@/lib/referrals";
 
 function toErrorMessage(error: unknown) {
@@ -40,14 +44,37 @@ function normalizeProjectType(value: string): ProjectTypeOption {
   return "OTHERS";
 }
 
-async function getActionReferrer() {
+function normalizeStatus(value: string): ReferralStatus {
+  if (REFERRAL_STATUSES.includes(value as ReferralStatus)) {
+    return value as ReferralStatus;
+  }
+
+  return "Pending";
+}
+
+async function getActionAuthUser() {
   const user = await getCurrentAuthUser();
 
   if (!user) {
     redirect("/auth/start?return_to=/dashboard");
   }
 
-  return findOrCreateReferrerAccount(user);
+  return user;
+}
+
+async function getActionReferrer() {
+  return findOrCreateReferrerAccount(await getActionAuthUser());
+}
+
+async function requireManagerUser() {
+  const authUser = await getActionAuthUser();
+  const internalUser = await findInternalAppUser(authUser);
+
+  if (!internalUser || !hasAnyAccessLevel(internalUser.accessLevels, ["HR", "KC"])) {
+    throw new ReferralError("Only HR/KC users can manage referral assignments.");
+  }
+
+  return internalUser;
 }
 
 export async function addReferralAction(formData: FormData) {
@@ -59,7 +86,9 @@ export async function addReferralAction(formData: FormData) {
     await createReferral(referrer, {
       leadName: String(formData.get("leadName") ?? ""),
       leadMobileNumber: String(formData.get("leadMobileNumber") ?? ""),
-      livingRegion: String(formData.get("livingRegion") ?? ""),
+      leadState: String(formData.get("leadState") ?? formData.get("livingRegion") ?? ""),
+      leadCity: String(formData.get("leadCity") ?? ""),
+      leadAddress: String(formData.get("leadAddress") ?? ""),
       relationship,
       projectType,
       preferredAgentId: String(formData.get("preferredAgentId") ?? ""),
@@ -102,20 +131,34 @@ export async function editReferralAction(formData: FormData) {
       referralId: Number(formData.get("referralId") ?? "0"),
       leadName: String(formData.get("leadName") ?? ""),
       leadMobileNumber: String(formData.get("leadMobileNumber") ?? ""),
-      livingRegion: String(formData.get("livingRegion") ?? ""),
+      leadState: String(formData.get("leadState") ?? formData.get("livingRegion") ?? ""),
+      leadCity: String(formData.get("leadCity") ?? ""),
+      leadAddress: String(formData.get("leadAddress") ?? ""),
       relationship,
       projectType,
       preferredAgentId: String(formData.get("preferredAgentId") ?? ""),
-      status: String(formData.get("status") ?? "Pending") as
-        | "Pending"
-        | "Qualified"
-        | "Proposal"
-        | "Won"
-        | "Lost",
     });
 
     revalidatePath("/dashboard");
     redirect("/dashboard?success=Referral+updated");
+  } catch (error) {
+    const message = toErrorMessage(error);
+    redirect(`/dashboard?error=${encodeURIComponent(message)}`);
+  }
+}
+
+export async function updateReferralWorkflowAction(formData: FormData) {
+  try {
+    await requireManagerUser();
+
+    await updateReferralManagerWorkflow({
+      referralId: Number(formData.get("referralId") ?? "0"),
+      assignedAgentId: String(formData.get("assignedAgentId") ?? ""),
+      status: normalizeStatus(String(formData.get("status") ?? "Pending")),
+    });
+
+    revalidatePath("/dashboard");
+    redirect("/dashboard?success=Referral+workflow+updated");
   } catch (error) {
     const message = toErrorMessage(error);
     redirect(`/dashboard?error=${encodeURIComponent(message)}`);

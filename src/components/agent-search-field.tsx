@@ -8,12 +8,16 @@ type AgentSearchFieldProps = {
   agents: AgentOption[];
   defaultAgentId?: string | null;
   label?: string;
+  inputName?: string;
+  helperText?: string;
 };
 
 export default function AgentSearchField({
   agents,
   defaultAgentId = null,
   label = "Preferred Agent to Handle LEAD",
+  inputName = "preferredAgentId",
+  helperText = "Select an agent from the search results.",
 }: AgentSearchFieldProps) {
   const defaultAgent = useMemo(
     () => (defaultAgentId ? agents.find((agent) => agent.id === defaultAgentId) : undefined),
@@ -37,7 +41,7 @@ export default function AgentSearchField({
   return (
     <label className="text-sm text-slate-700 md:col-span-2">
       {label}
-      <input type="hidden" name="preferredAgentId" value={selectedAgentId} />
+      <input type="hidden" name={inputName} value={selectedAgentId} />
       <input
         type="search"
         value={query}
@@ -76,7 +80,7 @@ export default function AgentSearchField({
         </div>
       ) : null}
       <p className="mt-1 text-xs text-slate-500">
-        {selectedAgentId ? `Selected agent ID: ${selectedAgentId}` : "Select an agent from the search results."}
+        {selectedAgentId ? `Selected agent ID: ${selectedAgentId}` : helperText}
       </p>
     </label>
   );

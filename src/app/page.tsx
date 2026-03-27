@@ -12,12 +12,12 @@ const STEPS = [
   {
     title: "2. Submit A Lead",
     description:
-      "Only four fields are needed: lead name, mobile number, living region, and your relationship with the lead.",
+      "Submit the lead name, mobile number, location details, relationship, and your preferred handling agent.",
   },
   {
     title: "3. Track Lead Status",
     description:
-      "You can monitor each referral from pending to won, and update lead details anytime from your dashboard.",
+      "You can monitor each referral from pending through qualification, while management handles assignment internally.",
   },
 ];
 
@@ -84,8 +84,8 @@ export default function Home() {
           <li>Commission rate: {REFERRAL_FEE_RULE_SUMMARY}</li>
           <li>Payout timing: {REFERRAL_PAYOUT_RULE}</li>
           <li>WhatsApp sign-in is mandatory before creating a referral account.</li>
-          <li>No full address is required for leads, only living region.</li>
-          <li>The dashboard supports profile updates, adding and editing referrals.</li>
+          <li>Lead location can include state, city, and address details.</li>
+          <li>The dashboard supports profile updates, adding referrals, and editing your own lead details.</li>
         </ul>
       </section>
 

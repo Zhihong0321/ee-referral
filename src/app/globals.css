@@ -74,17 +74,20 @@ a {
 }
 
 .status-qualified,
-.status-proposal {
+.status-proposal,
+.status-info {
   background: #e3f8ff;
   color: #035388;
 }
 
-.status-won {
+.status-won,
+.status-success {
   background: #dff7ec;
   color: #1f7a4f;
 }
 
-.status-lost {
+.status-lost,
+.status-danger {
   background: #ffe3e3;
   color: #9b1c1c;
 }
