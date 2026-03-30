@@ -135,6 +135,7 @@ type CustomerCapabilities = {
   hasLinkedReferrer: boolean;
   hasReferralProjectType: boolean;
   hasReferralLinkedAgent: boolean;
+  hasReferralPreferredAgentLog: boolean;
   hasReferralAssignedAgent: boolean;
   hasReferralLeadState: boolean;
   hasReferralLeadCity: boolean;
@@ -250,6 +251,13 @@ async function getCustomerCapabilities(executor: Queryable): Promise<CustomerCap
       FROM information_schema.columns
       WHERE table_schema = 'public'
         AND table_name = 'referral'
+        AND column_name = 'preferred_agent_log'
+    ) AS has_referral_preferred_agent_log,
+    EXISTS (
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'referral'
         AND column_name = 'assigned_agent'
     ) AS has_referral_assigned_agent,
     EXISTS (
@@ -305,6 +313,7 @@ async function getCustomerCapabilities(executor: Queryable): Promise<CustomerCap
     hasLinkedReferrer: result.rows[0]?.has_linked_referrer ?? false,
     hasReferralProjectType: result.rows[0]?.has_referral_project_type ?? false,
     hasReferralLinkedAgent: result.rows[0]?.has_referral_linked_agent ?? false,
+    hasReferralPreferredAgentLog: result.rows[0]?.has_referral_preferred_agent_log ?? false,
     hasReferralAssignedAgent: result.rows[0]?.has_referral_assigned_agent ?? false,
     hasReferralLeadState: result.rows[0]?.has_referral_lead_state ?? false,
     hasReferralLeadCity: result.rows[0]?.has_referral_lead_city ?? false,
@@ -378,6 +387,31 @@ async function normalizeAgentId(
   }
 
   return normalized;
+}
+
+async function getAgentLabel(client: PoolClient, agentId: string | null): Promise<string> {
+  if (!agentId) {
+    return "unassigned";
+  }
+
+  const result = await client.query<{ name: string | null }>(
+    `
+      SELECT a.name
+      FROM agent a
+      WHERE a.id = $1
+      LIMIT 1
+    `,
+    [Number(agentId)],
+  );
+
+  return result.rows[0]?.name?.trim() || agentId;
+}
+
+function buildPreferredAgentLogEntry(actorName: string, preferredAgentLabel: string): string {
+  const actorLabel = actorName.trim() || "Unknown";
+  const agentLabel = preferredAgentLabel.trim() || "unassigned";
+
+  return `${new Date().toISOString()} | ${actorLabel} set preferred agent = ${agentLabel}`;
 }
 
 function mapReferralRow(
@@ -1094,6 +1128,9 @@ export async function updateReferral(
       throw new ReferralError("You can only edit your own referrals.");
     }
 
+    const preferredAgentId = await normalizeAgentId(client, parsed.data.preferredAgentId, "Preferred agent");
+    const preferredAgentLabel = await getAgentLabel(client, preferredAgentId);
+    const preferredAgentLogEntry = buildPreferredAgentLogEntry(referrer.name, preferredAgentLabel);
     const setClauses = ["name = $1", "mobile_number = $2", "relationship = $3"];
     const values: unknown[] = [parsed.data.leadName, parsed.data.leadMobileNumber, parsed.data.relationship];
 
@@ -1104,7 +1141,15 @@ export async function updateReferral(
 
     if (capabilities.hasReferralLinkedAgent) {
       setClauses.push(`linked_agent = $${values.length + 1}`);
-      values.push(await normalizeAgentId(client, parsed.data.preferredAgentId, "Preferred agent"));
+      values.push(preferredAgentId);
+    }
+
+    if (capabilities.hasReferralPreferredAgentLog) {
+      setClauses.push(`preferred_agent_log = CASE
+        WHEN preferred_agent_log IS NULL OR BTRIM(preferred_agent_log) = '' THEN $${values.length + 1}
+        ELSE preferred_agent_log || E'\\n' || $${values.length + 1}
+      END`);
+      values.push(preferredAgentLogEntry);
     }
 
     if (capabilities.hasReferralLeadState) {

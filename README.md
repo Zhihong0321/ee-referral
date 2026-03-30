@@ -20,7 +20,7 @@ Next.js landing page + dashboard for a WhatsApp-first referral program.
 - Referral lead:
   - Stored in `customer` (`name`, `phone`, `state`, `city`, `address`, `lead_source='referral'`, relationship in `remark`, metadata in `notes`).
 - Referral workflow:
-  - Stored in `referral` (`name`, `mobile_number`, `relationship`, `status`, `linked_invoice` -> lead `customer.customer_id`, `linked_agent` as preferred agent, `assigned_agent` as manager-owned assignment, optional denormalized location columns).
+  - Stored in `referral` (`name`, `mobile_number`, `relationship`, `status`, `linked_invoice` -> lead `customer.customer_id`, `linked_agent` as preferred agent, `preferred_agent_log` as the append-only audit log for preferred-agent updates, `assigned_agent` as manager-owned assignment, optional denormalized location columns).
 
 ## Customer table fit check
 
