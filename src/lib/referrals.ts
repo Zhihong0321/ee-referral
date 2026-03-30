@@ -216,6 +216,7 @@ async function getCustomerCapabilities(executor: Queryable): Promise<CustomerCap
     has_linked_referrer: boolean;
     has_referral_project_type: boolean;
     has_referral_linked_agent: boolean;
+    has_referral_preferred_agent_log: boolean;
     has_referral_assigned_agent: boolean;
     has_referral_lead_state: boolean;
     has_referral_lead_city: boolean;
