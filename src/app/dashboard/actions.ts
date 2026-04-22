@@ -92,6 +92,7 @@ export async function addReferralAction(formData: FormData) {
       relationship,
       projectType,
       preferredAgentId: String(formData.get("preferredAgentId") ?? ""),
+      remark: String(formData.get("remark") ?? ""),
     });
 
     revalidatePath("/dashboard");

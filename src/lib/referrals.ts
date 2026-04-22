@@ -54,6 +54,7 @@ const referralInputSchema = z.object({
   relationship: z.enum(RELATIONSHIP_OPTIONS),
   projectType: z.enum(PROJECT_TYPE_OPTIONS),
   preferredAgentId: preferredAgentIdSchema.optional().default(""),
+  remark: z.string().trim().max(500, "Remark is too long").optional().default(""),
 });
 
 const referralEditSchema = referralInputSchema.extend({
@@ -111,6 +112,7 @@ export type ReferralRow = {
   assignedAgentName: string | null;
   createdAt: string | null;
   updatedAt: string | null;
+  remark: string | null;
 };
 
 export type ManagerReferralRow = ReferralRow & {
@@ -162,6 +164,7 @@ type ReferrerAccountRow = {
 type ReferrerNotes = {
   bankAccount?: string;
   bankerName?: string;
+  remark?: string;
   [key: string]: unknown;
 };
 
@@ -458,6 +461,7 @@ function mapReferralRow(
     updatedAt: row.updated_at,
     referrerCustomerId: row.referrer_customer_id ?? "",
     referrerCustomerName: row.referrer_customer_name ?? null,
+    remark: null,
   };
 }
 
@@ -655,6 +659,7 @@ export async function listReferralsByReferrer(referrerCustomerId: string): Promi
     assigned_agent_name: string | null;
     created_at: string | null;
     updated_at: string | null;
+    lead_notes: string | null;
   }>(
     `
       SELECT
@@ -674,7 +679,8 @@ export async function listReferralsByReferrer(referrerCustomerId: string): Promi
         ${assignedAgentIdSelect},
         ${assignedAgentNameSelect},
         r.created_at::text AS created_at,
-        r.updated_at::text AS updated_at
+        r.updated_at::text AS updated_at,
+        c.notes AS lead_notes
       FROM referral r
       LEFT JOIN customer c ON c.customer_id = r.linked_invoice
       ${preferredAgentJoin}
@@ -691,6 +697,9 @@ export async function listReferralsByReferrer(referrerCustomerId: string): Promi
       referrer_customer_id: referrerCustomerId,
       referrer_customer_name: null,
     });
+
+    const leadNotes = parseReferrerNotes(row.lead_notes);
+    const remark = typeof leadNotes.remark === "string" && leadNotes.remark ? leadNotes.remark : null;
 
     return {
       id: mapped.id,
@@ -710,6 +719,7 @@ export async function listReferralsByReferrer(referrerCustomerId: string): Promi
       assignedAgentName: mapped.assignedAgentName,
       createdAt: mapped.createdAt,
       updatedAt: mapped.updatedAt,
+      remark,
     };
   });
 }
@@ -907,6 +917,7 @@ export async function createReferral(
       preferredAgentId,
       linkedReferrer: referrer.customerId,
       syncedFromReferralPortal: true,
+      remark: parsed.data.remark || "",
       createdAt: new Date().toISOString(),
     };
 

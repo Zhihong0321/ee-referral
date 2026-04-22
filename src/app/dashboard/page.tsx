@@ -32,6 +32,8 @@ type DashboardPageProps = {
     status?: string;
     preferredAgentId?: string;
     assignedAgentId?: string;
+    impersonatePhone?: string;
+    impersonateName?: string;
   }>;
 };
 
@@ -146,6 +148,55 @@ function DashboardShell({
 
       {children}
     </main>
+  );
+}
+
+async function renderSuperadminDashboard() {
+  return (
+    <DashboardShell
+      badge="Superadmin Dashboard"
+      title="Referral Impersonation"
+      subtitle="Select or create a referral account to impersonate and manage their leads."
+    >
+      <section className="hero-reveal hero-delay mt-6 rounded-2xl border border-slate-200 bg-white p-6 sm:p-8">
+        <h2 className="text-xl font-semibold text-slate-900">Impersonate Referral</h2>
+        <p className="mt-2 text-sm text-slate-600">
+          Enter the phone number (and optionally name) of the referral account you want to manage. If the account doesn't exist, it will be created.
+        </p>
+
+        <form method="GET" action="/dashboard" className="mt-5 grid gap-4 md:grid-cols-2">
+          <label className="text-sm text-slate-700">
+            Referral Phone Number
+            <input
+              type="text"
+              name="impersonatePhone"
+              required
+              className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 outline-none ring-amber-500 focus:ring"
+              placeholder="e.g. 0123456789"
+            />
+          </label>
+
+          <label className="text-sm text-slate-700">
+            Referral Name (Optional)
+            <input
+              type="text"
+              name="impersonateName"
+              className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 outline-none ring-amber-500 focus:ring"
+              placeholder="e.g. John Doe"
+            />
+          </label>
+
+          <div className="md:col-span-2">
+            <button
+              type="submit"
+              className="inline-flex items-center justify-center rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800"
+            >
+              Enter Account
+            </button>
+          </div>
+        </form>
+      </section>
+    </DashboardShell>
   );
 }
 
@@ -377,6 +428,7 @@ async function renderAgentDashboard(
 async function renderReferrerDashboard(
   params: Awaited<DashboardPageProps["searchParams"]>,
   authUser: NonNullable<Awaited<ReturnType<typeof getCurrentAuthUser>>>,
+  isImpersonating = false,
 ) {
   let referralId = "";
   let referralName = authUser.name?.trim() || authUser.phone;
@@ -436,6 +488,14 @@ async function renderReferrerDashboard(
           </div>
 
           <div className="flex flex-col items-start gap-2 sm:items-end">
+            {isImpersonating && (
+              <Link
+                href="/dashboard"
+                className="rounded-lg bg-rose-100 px-3 py-1 text-xs font-semibold text-rose-700 hover:bg-rose-200"
+              >
+                Exit Impersonation
+              </Link>
+            )}
             <span className="pill">Commission: {REFERRAL_FEE_RULE_SUMMARY}</span>
             <Link href="/terms" className="text-sm font-semibold text-slate-700 hover:text-slate-900">
               View Terms & Conditions
@@ -608,6 +668,16 @@ async function renderReferrerDashboard(
 
               <AgentSearchField agents={agents} />
 
+              <label className="text-sm text-slate-700 md:col-span-2">
+                Remark
+                <textarea
+                  name="remark"
+                  rows={3}
+                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 outline-none ring-amber-500 focus:ring resize-none"
+                  placeholder="Optional notes or remarks about this lead"
+                />
+              </label>
+
               <div className="md:col-span-2">
                 <button
                   type="submit"
@@ -647,6 +717,11 @@ async function renderReferrerDashboard(
                         <p className="text-sm text-slate-600">
                           Assigned agent: {referral.assignedAgentName || "Not assigned yet"}
                         </p>
+                        {referral.remark ? (
+                          <p className="mt-1 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                            <span className="font-semibold">Remark:</span> {referral.remark}
+                          </p>
+                        ) : null}
                       </div>
                       <span className={statusClassName(referral.status)}>{referral.status || "Pending"}</span>
                     </div>
@@ -774,6 +849,19 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
 
   if (!authUser) {
     redirect("/auth/start?return_to=/dashboard");
+  }
+
+  // Superadmin bypass
+  if (authUser.phone === "01121000099" || authUser.phone === "+601121000099") {
+    if (params.impersonatePhone) {
+      const impersonatedUser = {
+        ...authUser,
+        phone: params.impersonatePhone,
+        name: params.impersonateName || params.impersonatePhone,
+      };
+      return renderReferrerDashboard(params, impersonatedUser, true);
+    }
+    return renderSuperadminDashboard();
   }
 
   const internalUser = await findInternalAppUser(authUser);
