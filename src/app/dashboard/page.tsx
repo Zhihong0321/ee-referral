@@ -161,7 +161,7 @@ async function renderSuperadminDashboard() {
       <section className="hero-reveal hero-delay mt-6 rounded-2xl border border-slate-200 bg-white p-6 sm:p-8">
         <h2 className="text-xl font-semibold text-slate-900">Impersonate Referral</h2>
         <p className="mt-2 text-sm text-slate-600">
-          Enter the phone number (and optionally name) of the referral account you want to manage. If the account doesn't exist, it will be created.
+          Enter the phone number (and optionally name) of the referral account you want to manage. If the account doesn&apos;t exist, it will be created.
         </p>
 
         <form method="GET" action="/dashboard" className="mt-5 grid gap-4 md:grid-cols-2">
@@ -520,6 +520,12 @@ async function renderReferrerDashboard(
             </p>
 
             <form action={updateProfileAction} className="mt-5 grid gap-4 md:grid-cols-2">
+              {isImpersonating && (
+                <>
+                  <input type="hidden" name="impersonatePhone" value={params.impersonatePhone || ""} />
+                  <input type="hidden" name="impersonateName" value={params.impersonateName || ""} />
+                </>
+              )}
               <label className="text-sm text-slate-700">
                 Name
                 <input
@@ -581,6 +587,12 @@ async function renderReferrerDashboard(
             </p>
 
             <form action={addReferralAction} className="mt-5 grid gap-4 md:grid-cols-2">
+              {isImpersonating && (
+                <>
+                  <input type="hidden" name="impersonatePhone" value={params.impersonatePhone || ""} />
+                  <input type="hidden" name="impersonateName" value={params.impersonateName || ""} />
+                </>
+              )}
               <label className="text-sm text-slate-700">
                 Lead name
                 <input
@@ -729,6 +741,12 @@ async function renderReferrerDashboard(
                     <details className="mt-3">
                       <summary className="cursor-pointer text-sm font-semibold text-teal-700">Edit referral</summary>
                       <form action={editReferralAction} className="mt-3 grid gap-3 md:grid-cols-2">
+                        {isImpersonating && (
+                          <>
+                            <input type="hidden" name="impersonatePhone" value={params.impersonatePhone || ""} />
+                            <input type="hidden" name="impersonateName" value={params.impersonateName || ""} />
+                          </>
+                        )}
                         <input type="hidden" name="referralId" value={referral.id} />
 
                         <label className="text-sm text-slate-700">
