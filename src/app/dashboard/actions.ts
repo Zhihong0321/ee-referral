@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { isRedirectError } from "next/dist/client/components/redirect-error";
 import { redirect } from "next/navigation";
 
 import { getCurrentAuthUser } from "@/lib/auth";
@@ -126,6 +127,7 @@ export async function addReferralAction(formData: FormData) {
     revalidatePath("/dashboard");
     redirect(getRedirectUrl("/dashboard", formData, "success=Referral+added"));
   } catch (error) {
+    if (isRedirectError(error)) throw error;
     const message = toErrorMessage(error);
     redirect(getRedirectUrl("/dashboard", formData, `error=${encodeURIComponent(message)}`));
   }
@@ -145,6 +147,7 @@ export async function updateProfileAction(formData: FormData) {
     revalidatePath("/dashboard");
     redirect(getRedirectUrl("/dashboard", formData, "success=Profile+updated"));
   } catch (error) {
+    if (isRedirectError(error)) throw error;
     const message = toErrorMessage(error);
     redirect(getRedirectUrl("/dashboard", formData, `error=${encodeURIComponent(message)}`));
   }
@@ -171,6 +174,7 @@ export async function editReferralAction(formData: FormData) {
     revalidatePath("/dashboard");
     redirect(getRedirectUrl("/dashboard", formData, "success=Referral+updated"));
   } catch (error) {
+    if (isRedirectError(error)) throw error;
     const message = toErrorMessage(error);
     redirect(getRedirectUrl("/dashboard", formData, `error=${encodeURIComponent(message)}`));
   }
@@ -189,6 +193,7 @@ export async function updateReferralWorkflowAction(formData: FormData) {
     revalidatePath("/dashboard");
     redirect("/dashboard?success=Referral+workflow+updated");
   } catch (error) {
+    if (isRedirectError(error)) throw error;
     const message = toErrorMessage(error);
     redirect(`/dashboard?error=${encodeURIComponent(message)}`);
   }

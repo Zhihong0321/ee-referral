@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { cookies } from "next/headers";
+import { isRedirectError } from "next/dist/client/components/redirect-error";
 import { redirect } from "next/navigation";
 
 import {
@@ -66,6 +67,7 @@ export async function adminUpdateReferralWorkflowAction(formData: FormData) {
     revalidatePath("/admin");
     redirect("/admin?success=Referral+workflow+updated");
   } catch (error) {
+    if (isRedirectError(error)) throw error;
     const message = toErrorMessage(error);
     redirect(`/admin?error=${encodeURIComponent(message)}`);
   }
