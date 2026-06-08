@@ -860,25 +860,21 @@ export async function listAssignedReferrals(agentId: string): Promise<ManagerRef
 export async function listAgentOptions(): Promise<AgentOption[]> {
   const capabilities = await getCustomerCapabilities({ query });
 
-  if (!capabilities.hasAgentTable) {
+  if (!capabilities.hasUserTable) {
     return [];
   }
-
-  const canFilterSales =
-    capabilities.hasAgentLinkedUserLogin && capabilities.hasUserTable && capabilities.hasUserAccessLevel;
 
   const result = await query<{
     id: number;
     name: string | null;
   }>(
     `
-      SELECT a.id, a.name
-      FROM agent a
-      ${canFilterSales ? 'JOIN "user" u ON u.bubble_id = a.linked_user_login' : ""}
-      WHERE a.name IS NOT NULL
-        ${canFilterSales ? "AND EXISTS (SELECT 1 FROM unnest(u.access_level) AS x WHERE LOWER(x) LIKE '%sales%')" : ""}
-        AND BTRIM(a.name) <> ''
-      ORDER BY a.name ASC
+      SELECT u.id, u.name
+      FROM "user" u
+      WHERE u.name IS NOT NULL
+        AND BTRIM(u.name) <> ''
+        ${capabilities.hasUserAccessLevel ? "AND EXISTS (SELECT 1 FROM unnest(u.access_level) AS x WHERE LOWER(x) LIKE '%sales%')" : ""}
+      ORDER BY u.name ASC
     `,
   );
 
