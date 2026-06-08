@@ -367,20 +367,16 @@ async function normalizeAgentId(
     return null;
   }
 
-  if (!capabilities.hasAgentTable) {
+  if (!capabilities.hasUserTable) {
     return null;
   }
 
-  const canFilterSales =
-    capabilities.hasAgentLinkedUserLogin && capabilities.hasUserTable && capabilities.hasUserAccessLevel;
-
   const existing = await client.query<{ id: number }>(
     `
-      SELECT a.id
-      FROM agent a
-      ${canFilterSales ? 'JOIN "user" u ON u.bubble_id = a.linked_user_login' : ""}
-      WHERE a.id = $1
-        ${canFilterSales ? "AND EXISTS (SELECT 1 FROM unnest(u.access_level) AS x WHERE LOWER(x) LIKE '%sales%')" : ""}
+      SELECT u.id
+      FROM "user" u
+      WHERE u.id = $1
+        ${capabilities.hasUserAccessLevel ? "AND EXISTS (SELECT 1 FROM unnest(u.access_level) AS x WHERE LOWER(x) LIKE '%sales%')" : ""}
       LIMIT 1
     `,
     [Number(normalized)],
@@ -400,9 +396,9 @@ async function getAgentLabel(client: PoolClient, agentId: string | null): Promis
 
   const result = await client.query<{ name: string | null }>(
     `
-      SELECT a.name
-      FROM agent a
-      WHERE a.id = $1
+      SELECT u.name
+      FROM "user" u
+      WHERE u.id = $1
       LIMIT 1
     `,
     [Number(agentId)],
@@ -622,23 +618,23 @@ export async function listReferralsByReferrer(referrerCustomerId: string): Promi
     ? "r.linked_agent AS preferred_agent_id"
     : "NULL::text AS preferred_agent_id";
   const preferredAgentNameSelect =
-    capabilities.hasReferralLinkedAgent && capabilities.hasAgentTable
+    capabilities.hasReferralLinkedAgent && capabilities.hasUserTable
       ? "preferred_agent.name AS preferred_agent_name"
       : "NULL::text AS preferred_agent_name";
   const preferredAgentJoin =
-    capabilities.hasReferralLinkedAgent && capabilities.hasAgentTable
-      ? "LEFT JOIN agent preferred_agent ON preferred_agent.id::text = r.linked_agent"
+    capabilities.hasReferralLinkedAgent && capabilities.hasUserTable
+      ? 'LEFT JOIN "user" preferred_agent ON preferred_agent.id::text = r.linked_agent'
       : "";
   const assignedAgentIdSelect = capabilities.hasReferralAssignedAgent
     ? "r.assigned_agent AS assigned_agent_id"
     : "NULL::text AS assigned_agent_id";
   const assignedAgentNameSelect =
-    capabilities.hasReferralAssignedAgent && capabilities.hasAgentTable
+    capabilities.hasReferralAssignedAgent && capabilities.hasUserTable
       ? "assigned_agent.name AS assigned_agent_name"
       : "NULL::text AS assigned_agent_name";
   const assignedAgentJoin =
-    capabilities.hasReferralAssignedAgent && capabilities.hasAgentTable
-      ? "LEFT JOIN agent assigned_agent ON assigned_agent.id::text = r.assigned_agent"
+    capabilities.hasReferralAssignedAgent && capabilities.hasUserTable
+      ? 'LEFT JOIN "user" assigned_agent ON assigned_agent.id::text = r.assigned_agent'
       : "";
 
   const result = await query<{
@@ -731,23 +727,23 @@ export async function listManagerReferralLeads(filters: ManagerReferralFilters =
     ? "r.linked_agent AS preferred_agent_id"
     : "NULL::text AS preferred_agent_id";
   const preferredAgentNameSelect =
-    capabilities.hasReferralLinkedAgent && capabilities.hasAgentTable
+    capabilities.hasReferralLinkedAgent && capabilities.hasUserTable
       ? "preferred_agent.name AS preferred_agent_name"
       : "NULL::text AS preferred_agent_name";
   const preferredAgentJoin =
-    capabilities.hasReferralLinkedAgent && capabilities.hasAgentTable
-      ? "LEFT JOIN agent preferred_agent ON preferred_agent.id::text = r.linked_agent"
+    capabilities.hasReferralLinkedAgent && capabilities.hasUserTable
+      ? 'LEFT JOIN "user" preferred_agent ON preferred_agent.id::text = r.linked_agent'
       : "";
   const assignedAgentIdSelect = capabilities.hasReferralAssignedAgent
     ? "r.assigned_agent AS assigned_agent_id"
     : "NULL::text AS assigned_agent_id";
   const assignedAgentNameSelect =
-    capabilities.hasReferralAssignedAgent && capabilities.hasAgentTable
+    capabilities.hasReferralAssignedAgent && capabilities.hasUserTable
       ? "assigned_agent.name AS assigned_agent_name"
       : "NULL::text AS assigned_agent_name";
   const assignedAgentJoin =
-    capabilities.hasReferralAssignedAgent && capabilities.hasAgentTable
-      ? "LEFT JOIN agent assigned_agent ON assigned_agent.id::text = r.assigned_agent"
+    capabilities.hasReferralAssignedAgent && capabilities.hasUserTable
+      ? 'LEFT JOIN "user" assigned_agent ON assigned_agent.id::text = r.assigned_agent'
       : "";
 
   const whereClauses: string[] = [];
