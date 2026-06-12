@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { isRedirectError } from "next/dist/client/components/redirect-error";
 import { redirect } from "next/navigation";
 
-import { getCurrentAuthUser } from "@/lib/auth";
+import { getCurrentAuthUser, isUserAssistUnlocked, lockUserAssistMode, unlockUserAssistMode } from "@/lib/auth";
 import { findInternalAppUser, hasAnyAccessLevel } from "@/lib/internal-users";
 import {
   PROJECT_TYPE_OPTIONS,
@@ -65,33 +65,42 @@ async function getActionAuthUser() {
 
 function getRedirectUrl(base: string, formData: FormData, statusParams = "") {
   const params = new URLSearchParams(statusParams);
-  
-  const impersonatePhone = formData.get("impersonatePhone");
-  if (impersonatePhone) {
-    params.set("impersonatePhone", String(impersonatePhone));
+
+  const userAssist = formData.get("userAssist");
+  if (userAssist) {
+    params.set("userAssist", String(userAssist));
   }
-  
-  const impersonateName = formData.get("impersonateName");
-  if (impersonateName) {
-    params.set("impersonateName", String(impersonateName));
+
+  const assistPhone = formData.get("assistPhone");
+  if (assistPhone) {
+    params.set("assistPhone", String(assistPhone));
   }
-  
+
+  const assistName = formData.get("assistName");
+  if (assistName) {
+    params.set("assistName", String(assistName));
+  }
+
   const query = params.toString();
   return query ? `${base}?${query}` : base;
 }
 
 async function getActionReferrer(formData?: FormData) {
   const user = await getActionAuthUser();
-  if (user.phone === "01121000099" || user.phone === "+601121000099") {
-    const impersonatePhone = formData?.get("impersonatePhone");
-    if (impersonatePhone) {
-       return findOrCreateReferrerAccount({
-         ...user,
-         phone: String(impersonatePhone),
-         name: String(formData?.get("impersonateName") || impersonatePhone)
-       });
+
+  const assistPhone = String(formData?.get("assistPhone") ?? "").trim();
+  if (assistPhone) {
+    if (!(await isUserAssistUnlocked())) {
+      throw new ReferralError("Unlock User-Assist before helping another user.");
     }
+
+    return findOrCreateReferrerAccount({
+      ...user,
+      phone: assistPhone,
+      name: String(formData?.get("assistName") || assistPhone),
+    });
   }
+
   return findOrCreateReferrerAccount(user);
 }
 
@@ -131,6 +140,22 @@ export async function addReferralAction(formData: FormData) {
     const message = toErrorMessage(error);
     redirect(getRedirectUrl("/dashboard", formData, `error=${encodeURIComponent(message)}`));
   }
+}
+
+export async function unlockUserAssistModeAction(formData: FormData) {
+  const password = String(formData.get("password") ?? "");
+  const unlocked = await unlockUserAssistMode(password);
+
+  if (!unlocked) {
+    redirect("/dashboard?userAssist=1&error=Wrong+password.+Please+try+again.");
+  }
+
+  redirect("/dashboard?userAssist=1&success=User-Assist+mode+unlocked");
+}
+
+export async function lockUserAssistModeAction() {
+  await lockUserAssistMode();
+  redirect("/dashboard?success=User-Assist+mode+locked");
 }
 
 export async function updateProfileAction(formData: FormData) {

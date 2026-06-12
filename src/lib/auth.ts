@@ -3,6 +3,10 @@ import jwt, { type JwtPayload } from "jsonwebtoken";
 
 import { getEnv } from "@/lib/env";
 
+const USER_ASSIST_COOKIE_NAME = "user_assist_mode";
+const USER_ASSIST_COOKIE_VALUE = "unlocked";
+const USER_ASSIST_PASSWORD = "help me add";
+
 export type AuthHubUser = {
   userId?: string;
   name?: string;
@@ -71,4 +75,29 @@ export async function getCurrentAuthUser() {
   }
 
   return verifyAuthToken(token);
+}
+
+export async function isUserAssistUnlocked() {
+  const cookieStore = await cookies();
+  return cookieStore.get(USER_ASSIST_COOKIE_NAME)?.value === USER_ASSIST_COOKIE_VALUE;
+}
+
+export async function unlockUserAssistMode(password: string) {
+  if (password.trim() !== USER_ASSIST_PASSWORD) {
+    return false;
+  }
+
+  const cookieStore = await cookies();
+  cookieStore.set(USER_ASSIST_COOKIE_NAME, USER_ASSIST_COOKIE_VALUE, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+  });
+  return true;
+}
+
+export async function lockUserAssistMode() {
+  const cookieStore = await cookies();
+  cookieStore.delete(USER_ASSIST_COOKIE_NAME);
 }

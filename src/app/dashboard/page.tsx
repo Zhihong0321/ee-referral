@@ -5,11 +5,13 @@ import type { ReactNode } from "react";
 import {
   addReferralAction,
   editReferralAction,
+  lockUserAssistModeAction,
+  unlockUserAssistModeAction,
   updateProfileAction,
   updateReferralWorkflowAction,
 } from "@/app/dashboard/actions";
 import AgentSearchField from "@/components/agent-search-field";
-import { getCurrentAuthUser } from "@/lib/auth";
+import { getCurrentAuthUser, isUserAssistUnlocked } from "@/lib/auth";
 import { findInternalAppUser, hasAnyAccessLevel } from "@/lib/internal-users";
 import {
   PROJECT_TYPE_OPTIONS,
@@ -32,8 +34,9 @@ type DashboardPageProps = {
     status?: string;
     preferredAgentId?: string;
     assignedAgentId?: string;
-    impersonatePhone?: string;
-    impersonateName?: string;
+    userAssist?: string;
+    assistPhone?: string;
+    assistName?: string;
   }>;
 };
 
@@ -113,16 +116,31 @@ function FlashMessages({ success, error }: FlashMessagesProps) {
   );
 }
 
+function LockUserAssistButton() {
+  return (
+    <form action={lockUserAssistModeAction}>
+      <button
+        type="submit"
+        className="rounded-lg bg-rose-100 px-3 py-1 text-xs font-semibold text-rose-700 hover:bg-rose-200"
+      >
+        Exit User-Assist
+      </button>
+    </form>
+  );
+}
+
 function DashboardShell({
   title,
   subtitle,
   badge,
   children,
+  headerActions,
 }: {
   title: string;
   subtitle: string;
   badge: string;
   children: ReactNode;
+  headerActions?: ReactNode;
 }) {
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-6xl flex-col px-5 py-8 sm:px-8 sm:py-10">
@@ -135,6 +153,10 @@ function DashboardShell({
           </div>
 
           <div className="flex flex-col items-start gap-2 sm:items-end">
+            {headerActions}
+            <Link href="/dashboard?userAssist=1" className="text-sm font-semibold text-violet-700 hover:text-violet-800">
+              Help Other to Add Lead
+            </Link>
             <span className="pill">Commission: {REFERRAL_FEE_RULE_SUMMARY}</span>
             <Link href="/terms" className="text-sm font-semibold text-slate-700 hover:text-slate-900">
               View Terms & Conditions
@@ -151,25 +173,26 @@ function DashboardShell({
   );
 }
 
-async function renderSuperadminDashboard() {
+async function renderUserAssistDashboard() {
   return (
     <DashboardShell
-      badge="Superadmin Dashboard"
-      title="Referral Impersonation"
-      subtitle="Select or create a referral account to impersonate and manage their leads."
+      badge="User-Assist Dashboard"
+      title="Referral Account Support"
+      subtitle="Select or create a referral account to help manage their leads."
     >
       <section className="hero-reveal hero-delay mt-6 rounded-2xl border border-slate-200 bg-white p-6 sm:p-8">
-        <h2 className="text-xl font-semibold text-slate-900">Impersonate Referral</h2>
+        <h2 className="text-xl font-semibold text-slate-900">Manage Referral Account</h2>
         <p className="mt-2 text-sm text-slate-600">
           Enter the phone number (and optionally name) of the referral account you want to manage. If the account doesn&apos;t exist, it will be created.
         </p>
 
         <form method="GET" action="/dashboard" className="mt-5 grid gap-4 md:grid-cols-2">
+          <input type="hidden" name="userAssist" value="1" />
           <label className="text-sm text-slate-700">
             Referral Phone Number
             <input
               type="text"
-              name="impersonatePhone"
+              name="assistPhone"
               required
               className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 outline-none ring-amber-500 focus:ring"
               placeholder="e.g. 0123456789"
@@ -180,7 +203,7 @@ async function renderSuperadminDashboard() {
             Referral Name (Optional)
             <input
               type="text"
-              name="impersonateName"
+              name="assistName"
               className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 outline-none ring-amber-500 focus:ring"
               placeholder="e.g. John Doe"
             />
@@ -192,6 +215,41 @@ async function renderSuperadminDashboard() {
               className="inline-flex items-center justify-center rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800"
             >
               Enter Account
+            </button>
+          </div>
+        </form>
+      </section>
+    </DashboardShell>
+  );
+}
+
+function renderUserAssistUnlockDashboard(params: Awaited<DashboardPageProps["searchParams"]>) {
+  return (
+    <DashboardShell
+      badge="User-Assist"
+      title="Unlock User-Assist"
+      subtitle="Enter the support password before helping another referral account."
+    >
+      <FlashMessages success={params.success} error={params.error} />
+
+      <section className="hero-reveal hero-delay mt-6 rounded-2xl border border-slate-200 bg-white p-6 sm:p-8">
+        <form action={unlockUserAssistModeAction} className="grid gap-4 md:grid-cols-2">
+          <label className="text-sm text-slate-700">
+            Support password
+            <input
+              type="password"
+              name="password"
+              required
+              className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 outline-none ring-amber-500 focus:ring"
+            />
+          </label>
+
+          <div className="flex items-end">
+            <button
+              type="submit"
+              className="inline-flex items-center justify-center rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800"
+            >
+              Unlock
             </button>
           </div>
         </form>
@@ -428,7 +486,7 @@ async function renderAgentDashboard(
 async function renderReferrerDashboard(
   params: Awaited<DashboardPageProps["searchParams"]>,
   authUser: NonNullable<Awaited<ReturnType<typeof getCurrentAuthUser>>>,
-  isImpersonating = false,
+  isAssistingUser = false,
 ) {
   let referralId = "";
   let referralName = authUser.name?.trim() || authUser.phone;
@@ -488,14 +546,7 @@ async function renderReferrerDashboard(
           </div>
 
           <div className="flex flex-col items-start gap-2 sm:items-end">
-            {isImpersonating && (
-              <Link
-                href="/dashboard"
-                className="rounded-lg bg-rose-100 px-3 py-1 text-xs font-semibold text-rose-700 hover:bg-rose-200"
-              >
-                Exit Impersonation
-              </Link>
-            )}
+            {isAssistingUser && <LockUserAssistButton />}
             <span className="pill">Commission: {REFERRAL_FEE_RULE_SUMMARY}</span>
             <Link href="/terms" className="text-sm font-semibold text-slate-700 hover:text-slate-900">
               View Terms & Conditions
@@ -520,10 +571,11 @@ async function renderReferrerDashboard(
             </p>
 
             <form action={updateProfileAction} className="mt-5 grid gap-4 md:grid-cols-2">
-              {isImpersonating && (
+              {isAssistingUser && (
                 <>
-                  <input type="hidden" name="impersonatePhone" value={params.impersonatePhone || ""} />
-                  <input type="hidden" name="impersonateName" value={params.impersonateName || ""} />
+                  <input type="hidden" name="userAssist" value="1" />
+                  <input type="hidden" name="assistPhone" value={params.assistPhone || ""} />
+                  <input type="hidden" name="assistName" value={params.assistName || ""} />
                 </>
               )}
               <label className="text-sm text-slate-700">
@@ -587,10 +639,11 @@ async function renderReferrerDashboard(
             </p>
 
             <form action={addReferralAction} className="mt-5 grid gap-4 md:grid-cols-2">
-              {isImpersonating && (
+              {isAssistingUser && (
                 <>
-                  <input type="hidden" name="impersonatePhone" value={params.impersonatePhone || ""} />
-                  <input type="hidden" name="impersonateName" value={params.impersonateName || ""} />
+                  <input type="hidden" name="userAssist" value="1" />
+                  <input type="hidden" name="assistPhone" value={params.assistPhone || ""} />
+                  <input type="hidden" name="assistName" value={params.assistName || ""} />
                 </>
               )}
               <label className="text-sm text-slate-700">
@@ -741,10 +794,11 @@ async function renderReferrerDashboard(
                     <details className="mt-3">
                       <summary className="cursor-pointer text-sm font-semibold text-teal-700">Edit referral</summary>
                       <form action={editReferralAction} className="mt-3 grid gap-3 md:grid-cols-2">
-                        {isImpersonating && (
+                        {isAssistingUser && (
                           <>
-                            <input type="hidden" name="impersonatePhone" value={params.impersonatePhone || ""} />
-                            <input type="hidden" name="impersonateName" value={params.impersonateName || ""} />
+                            <input type="hidden" name="userAssist" value="1" />
+                            <input type="hidden" name="assistPhone" value={params.assistPhone || ""} />
+                            <input type="hidden" name="assistName" value={params.assistName || ""} />
                           </>
                         )}
                         <input type="hidden" name="referralId" value={referral.id} />
@@ -869,17 +923,25 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
     redirect("/auth/start?return_to=/dashboard");
   }
 
-  // Superadmin bypass
-  if (authUser.phone === "01121000099" || authUser.phone === "+601121000099") {
-    if (params.impersonatePhone) {
-      const impersonatedUser = {
-        ...authUser,
-        phone: params.impersonatePhone,
-        name: params.impersonateName || params.impersonatePhone,
-      };
-      return renderReferrerDashboard(params, impersonatedUser, true);
+  const isUserAssistRequested = params.userAssist === "1" || Boolean(params.assistPhone);
+
+  if (isUserAssistRequested) {
+    const userAssistUnlocked = await isUserAssistUnlocked();
+
+    if (!userAssistUnlocked) {
+      return renderUserAssistUnlockDashboard(params);
     }
-    return renderSuperadminDashboard();
+
+    if (params.assistPhone) {
+      const assistedUser = {
+        ...authUser,
+        phone: params.assistPhone,
+        name: params.assistName || params.assistPhone,
+      };
+      return renderReferrerDashboard(params, assistedUser, true);
+    }
+
+    return renderUserAssistDashboard();
   }
 
   const internalUser = await findInternalAppUser(authUser);
