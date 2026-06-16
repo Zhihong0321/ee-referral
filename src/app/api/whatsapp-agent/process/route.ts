@@ -76,19 +76,19 @@ export async function POST(request: Request) {
         const state = await loadAgentState(senderPhone);
         const reply = await runWhatsappAgentTurn({ senderPhone, text: message.text, state });
 
-        await insertEtMessage({
-          externalMessageId: message.externalMessageId,
-          direction: "inbound",
-          messageType: message.messageType || "text",
-          textContent: message.text,
-          rawPayload: message.rawPayload,
-          senderPhone,
-          recipientPhone,
-          channelSessionId: channelSession.id,
-        });
-
         let sendResult: unknown = null;
         if (!body.dryRun) {
+          await insertEtMessage({
+            externalMessageId: message.externalMessageId,
+            direction: "inbound",
+            messageType: message.messageType || "text",
+            textContent: message.text,
+            rawPayload: message.rawPayload,
+            senderPhone,
+            recipientPhone,
+            channelSessionId: channelSession.id,
+          });
+
           sendResult = await sendWhatsappText(senderPhone, reply);
           await insertEtMessage({
             externalMessageId: `agent_reply_${message.externalMessageId}`,
@@ -130,13 +130,17 @@ export async function POST(request: Request) {
       const recipientPhone = toCanonicalMalaysiaPhone(row.recipient_phone || "");
 
       if (!senderPhone) {
-        await markInboundFailed(row.id, "Missing sender phone.");
+        if (!body.dryRun) {
+          await markInboundFailed(row.id, "Missing sender phone.");
+        }
         results.push({ id: row.id, status: "failed", reason: "missing_sender_phone" });
         continue;
       }
 
       if (!text) {
-        await markInboundProcessed(row.id, "");
+        if (!body.dryRun) {
+          await markInboundProcessed(row.id, "");
+        }
         results.push({ id: row.id, status: "skipped", reason: "non_text_message", messageType: row.message_type });
         continue;
       }
@@ -144,19 +148,19 @@ export async function POST(request: Request) {
       const state = await loadAgentState(senderPhone);
       const reply = await runWhatsappAgentTurn({ senderPhone, text, state });
 
-      await insertEtMessage({
-        externalMessageId: row.external_message_id,
-        direction: "inbound",
-        messageType: row.message_type || "text",
-        textContent: text,
-        rawPayload: row.raw_payload,
-        senderPhone,
-        recipientPhone,
-        channelSessionId: channelSession.id,
-      });
-
       let sendResult: unknown = null;
       if (!body.dryRun) {
+        await insertEtMessage({
+          externalMessageId: row.external_message_id,
+          direction: "inbound",
+          messageType: row.message_type || "text",
+          textContent: text,
+          rawPayload: row.raw_payload,
+          senderPhone,
+          recipientPhone,
+          channelSessionId: channelSession.id,
+        });
+
         sendResult = await sendWhatsappText(senderPhone, reply);
         await insertEtMessage({
           externalMessageId: `agent_reply_${row.external_message_id}`,
@@ -170,7 +174,9 @@ export async function POST(request: Request) {
         });
       }
 
-      await markInboundProcessed(row.id, reply);
+      if (!body.dryRun) {
+        await markInboundProcessed(row.id, reply);
+      }
       results.push({
         id: row.id,
         status: body.dryRun ? "dry_run" : "processed",
@@ -180,7 +186,9 @@ export async function POST(request: Request) {
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown WhatsApp agent error.";
-      await markInboundFailed(row.id, message);
+      if (!body.dryRun) {
+        await markInboundFailed(row.id, message);
+      }
       results.push({ id: row.id, status: "failed", error: message });
     }
   }

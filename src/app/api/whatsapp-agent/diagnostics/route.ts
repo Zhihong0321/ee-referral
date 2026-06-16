@@ -118,23 +118,6 @@ export async function GET() {
         `,
       ),
     ),
-    check("processorDryRun", async () => {
-      const appBaseUrl = process.env.APP_BASE_URL?.replace(/\/$/, "");
-      if (!appBaseUrl) {
-        return { skipped: true, reason: "APP_BASE_URL is not set" };
-      }
-
-      return fetchJson(`${appBaseUrl}/api/whatsapp-agent/process`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(process.env.WHATSAPP_AGENT_PROCESS_SECRET
-            ? { Authorization: `Bearer ${process.env.WHATSAPP_AGENT_PROCESS_SECRET}` }
-            : {}),
-        },
-        body: JSON.stringify({ limit: 1, afterId: 0, dryRun: true }),
-      });
-    }),
   ]);
 
   const checks = Object.fromEntries(entries);
