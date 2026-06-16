@@ -251,6 +251,15 @@ function buildFallbackWhatsappReply(toolResult: string) {
     return 'No problem, I cancelled the new lead. Reply "add lead" when you want to start again.';
   }
 
+  if (/Lead draft cleared/i.test(result)) {
+    return [
+      "I cleared the unfinished lead draft and I am ready again.",
+      "",
+      'Send a phone number or reply "add lead" to add a referral.',
+      'Reply "my leads" to check leads, "show lead 1" to view one lead, or "update lead 1" to edit one.',
+    ].join("\n");
+  }
+
   if (/Lead is ready but not saved/i.test(result)) {
     return 'This lead is ready but not saved yet. Reply "CONFIRM" to save it or "CANCEL" to stop.';
   }
