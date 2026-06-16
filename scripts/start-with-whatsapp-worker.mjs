@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import fs from "node:fs";
 
 function start(name, command, args) {
   const child = spawn(command, args, {
@@ -14,7 +15,11 @@ function start(name, command, args) {
   return child;
 }
 
-start("next-server", "node", ["server.js"]);
+const nextServerArgs = fs.existsSync("server.js")
+  ? ["server.js"]
+  : ["node_modules/next/dist/bin/next", "start"];
+
+start("next-server", "node", nextServerArgs);
 
 setTimeout(() => {
   start("whatsapp-worker", "node", ["scripts/whatsapp-agent-worker.mjs"]);

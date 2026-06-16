@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start",
+    "start": "node scripts/start-with-whatsapp-worker.mjs",
     "lint": "eslint",
     "whatsapp:worker": "node scripts/whatsapp-agent-worker.mjs",
     "docker:build": "docker build -t ee-referral .",

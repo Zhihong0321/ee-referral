@@ -11,6 +11,15 @@ type CheckResult = {
   error?: string;
 };
 
+type InboundInboxDiagnosticRow = {
+  id: string;
+  sender_phone: string | null;
+  message_type: string | null;
+  process_status: string | null;
+  created_at: string | null;
+  last_error: string | null;
+};
+
 async function check(name: string, fn: () => Promise<unknown>): Promise<[string, CheckResult]> {
   try {
     return [name, { ok: true, data: await fn() }];
@@ -70,8 +79,8 @@ export async function GET() {
         `,
       ),
     ),
-    check("dbInboundInbox", async () =>
-      runWhatsappAgentSql(
+    check("dbInboundInbox", async () => {
+      const rows = await runWhatsappAgentSql<InboundInboxDiagnosticRow>(
         `
           SELECT id::text, session_identifier, sender_phone, message_type, process_status, process_attempts, created_at::text, last_error
           FROM wa_inbound_inbox
@@ -80,8 +89,24 @@ export async function GET() {
           LIMIT 10
         `,
         [sessionId],
-      ),
-    ),
+      );
+      const failedUserTextRows = rows.filter(
+        (row) =>
+          row.message_type === "text" &&
+          row.process_status === "failed" &&
+          row.sender_phone !== "60182920127",
+      );
+
+      if (failedUserTextRows.length > 0) {
+        throw new Error(
+          `Recent user text inbound rows failed: ${failedUserTextRows
+            .map((row) => `#${row.id} ${row.last_error || "unknown error"}`)
+            .join("; ")}`,
+        );
+      }
+
+      return rows;
+    }),
     check("dbRecentMessages", async () =>
       runWhatsappAgentSql(
         `
