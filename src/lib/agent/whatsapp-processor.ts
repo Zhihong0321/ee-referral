@@ -2,7 +2,6 @@ import {
   ensureChannelSession,
   hasEtMessage,
   insertEtMessage,
-  loadAgentState,
   sendWhatsappText,
 } from "@/lib/agent/whatsapp-data";
 import { runWhatsappAgentTurn } from "@/lib/agent/whatsapp-flow";
@@ -65,8 +64,7 @@ export async function processWhatsappAgentMessages(
         continue;
       }
 
-      const state = await loadAgentState(senderPhone);
-      const reply = await runWhatsappAgentTurn({ senderPhone, text: message.text, state });
+      const reply = await runWhatsappAgentTurn({ senderPhone, text: message.text });
 
       let sendResult: unknown = null;
       if (!dryRun) {

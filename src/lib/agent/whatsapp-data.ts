@@ -9,27 +9,34 @@ const REFERRAL_ACCOUNT_NAME = "Referral";
 const APP_ACTOR = "whatsapp_agent";
 
 export type WhatsappAgentState = {
-  mode: "idle" | "collecting_lead" | "confirming_lead" | "selecting_update_lead" | "selecting_update_field" | "collecting_update_value" | "confirming_update";
+  mode:
+    | "idle"
+    | "onboarding_name"
+    | "onboarding_bank"
+    | "collecting_lead"
+    | "selecting_update_lead"
+    | "selecting_update_field"
+    | "collecting_update_value"
+    | "confirming_update";
   draft: Partial<WhatsappLeadDraft>;
   nextField: WhatsappLeadField | null;
   update?: Partial<WhatsappUpdateDraft>;
+  onboarding?: { name?: string };
   lastLeadList?: Array<{ index: number; referralId: number; leadName: string }>;
 };
 
+// Minimal lead: only the contact number is strictly required. Name is collected
+// for usefulness; area is optional. Relationship/project type are not asked —
+// they default to "Other"/"OTHERS" at save time so managers can triage later.
 export type WhatsappLeadDraft = {
   leadName: string;
   leadMobileNumber: string;
-  leadState: string;
-  leadCity: string;
-  leadAddress: string;
-  relationship: RelationshipOption;
-  projectType: ProjectTypeOption;
-  remark: string;
+  area: string;
 };
 
 export type WhatsappLeadField = keyof WhatsappLeadDraft;
 
-export type WhatsappUpdateField = WhatsappLeadField;
+export type WhatsappUpdateField = "leadName" | "leadMobileNumber" | "area";
 
 export type WhatsappUpdateDraft = {
   referralId: number;
@@ -47,6 +54,9 @@ export type WhatsappReferrerAccount = {
   customerId: string;
   name: string;
   phone: string;
+  bankAccount: string;
+  // true once the referrer has a real name AND a payout bank account on file.
+  registered: boolean;
 };
 
 export type WhatsappAdminReferralRow = ReferralRow & {
@@ -65,6 +75,7 @@ type ReferrerRow = {
   customer_id: string;
   name: string | null;
   phone: string | null;
+  notes: string | null;
   match_rank: number;
   match_index: number;
   is_generic_name: boolean;
@@ -259,6 +270,7 @@ export async function resolveOrCreateReferrerByWhatsappPhone(senderPhone: string
         c.customer_id,
         c.name,
         c.phone,
+        c.notes,
         candidates.rank AS match_rank,
         candidates.match_index,
         lower(COALESCE(NULLIF(c.name, ''), $5)) = lower($5) AS is_generic_name
@@ -277,11 +289,7 @@ export async function resolveOrCreateReferrerByWhatsappPhone(senderPhone: string
   );
 
   if (rows[0]) {
-    return {
-      customerId: rows[0].customer_id,
-      name: rows[0].name?.trim() || REFERRAL_ACCOUNT_NAME,
-      phone: rows[0].phone || senderPhone,
-    };
+    return buildReferrerAccount(rows[0], senderPhone);
   }
 
   const canonicalPhone = toCanonicalMalaysiaPhone(senderPhone);
@@ -307,15 +315,66 @@ export async function resolveOrCreateReferrerByWhatsappPhone(senderPhone: string
         updated_by
       )
       VALUES ($1, $2, $3, 'other', $4, $5, $6, $6)
-      RETURNING customer_id, name, phone, 0 AS match_rank, 0 AS match_index, true AS is_generic_name
+      RETURNING customer_id, name, phone, notes, 0 AS match_rank, 0 AS match_index, true AS is_generic_name
     `,
     [generatedCustomerId, REFERRAL_ACCOUNT_NAME, canonicalPhone, REFERRAL_MARKER, notes, APP_ACTOR],
   );
 
+  return buildReferrerAccount(inserted[0], canonicalPhone);
+}
+
+function buildReferrerAccount(row: ReferrerRow, fallbackPhone: string): WhatsappReferrerAccount {
+  const notes = parseNotes(row.notes);
+  const bankAccount = typeof notes.bankAccount === "string" ? notes.bankAccount.trim() : "";
+  const trimmedName = row.name?.trim() || "";
+  const hasRealName = Boolean(trimmedName) && !row.is_generic_name;
+
   return {
-    customerId: inserted[0].customer_id,
-    name: inserted[0].name?.trim() || REFERRAL_ACCOUNT_NAME,
-    phone: inserted[0].phone || canonicalPhone,
+    customerId: row.customer_id,
+    name: trimmedName || REFERRAL_ACCOUNT_NAME,
+    phone: row.phone?.trim() || fallbackPhone,
+    bankAccount,
+    registered: hasRealName && Boolean(bankAccount),
+  };
+}
+
+// Persist a referrer's name + payout bank account (collected during WhatsApp
+// onboarding). Matches how the dashboard portal stores the profile: name in
+// customer.name, bank details merged into customer.notes JSON.
+export async function saveReferrerProfile(
+  referrer: WhatsappReferrerAccount,
+  input: { name: string; bankAccount: string; bankerName?: string },
+) {
+  const existingRows = await runWhatsappAgentSql<{ notes: string | null }>(
+    `SELECT notes FROM customer WHERE customer_id = $1 LIMIT 1`,
+    [referrer.customerId],
+  );
+  const mergedNotes = {
+    ...parseNotes(existingRows[0]?.notes ?? null),
+    kind: "referral_account",
+    bankAccount: input.bankAccount,
+    bankerName: input.bankerName?.trim() || input.name,
+    updatedAt: new Date().toISOString(),
+  };
+
+  await runWhatsappAgentSql(
+    `
+      UPDATE customer
+      SET name = $1,
+          notes = $2,
+          remark = $3,
+          updated_by = $4,
+          updated_at = NOW()
+      WHERE customer_id = $5
+    `,
+    [input.name, JSON.stringify(mergedNotes), REFERRAL_MARKER, APP_ACTOR, referrer.customerId],
+  );
+
+  return {
+    ...referrer,
+    name: input.name,
+    bankAccount: input.bankAccount,
+    registered: true,
   };
 }
 
@@ -493,15 +552,20 @@ export async function listWhatsappReferralsByReferrerPhone(phone: string, limit 
 export async function createWhatsappReferral(referrer: WhatsappReferrerAccount, draft: WhatsappLeadDraft) {
   const leadCustomerId = `cust_${crypto.randomUUID().replace(/-/g, "").slice(0, 12)}`;
   const referralBubbleId = `reflead_${crypto.randomUUID().replace(/-/g, "").slice(0, 12)}`;
+  // Relationship/project type are not collected over WhatsApp; default them to
+  // neutral values so the row stays valid and managers can triage later.
+  const defaultRelationship = "Other";
+  const defaultProjectType = "OTHERS";
+  const area = draft.area?.trim() || "";
   const metadata = JSON.stringify({
-    relationship: draft.relationship,
-    projectType: draft.projectType,
-    leadState: draft.leadState,
-    leadCity: draft.leadCity,
-    leadAddress: draft.leadAddress,
+    relationship: defaultRelationship,
+    projectType: defaultProjectType,
+    leadState: area,
+    leadCity: "",
+    leadAddress: "",
+    area,
     linkedReferrer: referrer.customerId,
     syncedFromReferralPortal: true,
-    remark: draft.remark,
     createdAt: new Date().toISOString(),
     createdBy: APP_ACTOR,
   });
@@ -553,15 +617,15 @@ export async function createWhatsappReferral(referrer: WhatsappReferrerAccount, 
       leadCustomerId,
       draft.leadName,
       draft.leadMobileNumber,
-      draft.leadState,
-      draft.leadCity,
-      draft.leadAddress,
-      draft.relationship,
+      area,
+      "",
+      "",
+      defaultRelationship,
       metadata,
       referrer.customerId,
       referralBubbleId,
       referrer.customerId,
-      draft.projectType,
+      defaultProjectType,
     ],
   );
 
@@ -575,12 +639,7 @@ export async function updateWhatsappReferral(
   const fieldMap: Record<WhatsappUpdateField, { referralColumn?: string; customerColumn?: string; noteKey?: string }> = {
     leadName: { referralColumn: "name", customerColumn: "name" },
     leadMobileNumber: { referralColumn: "mobile_number", customerColumn: "phone" },
-    leadState: { customerColumn: "state", noteKey: "leadState" },
-    leadCity: { customerColumn: "city", noteKey: "leadCity" },
-    leadAddress: { customerColumn: "address", noteKey: "leadAddress" },
-    relationship: { referralColumn: "relationship", customerColumn: "remark", noteKey: "relationship" },
-    projectType: { referralColumn: "project_type", noteKey: "projectType" },
-    remark: { noteKey: "remark" },
+    area: { customerColumn: "state", noteKey: "leadState" },
   };
   const mapping = fieldMap[update.field];
 
@@ -652,6 +711,33 @@ export async function updateWhatsappReferral(
     referralId: update.referralId,
     leadName: update.field === "leadName" ? update.value : existing.lead_name,
   };
+}
+
+// Recent conversation for one phone, oldest-first, for feeding the LLM agent.
+export async function loadRecentConversation(senderPhone: string, limit = 12) {
+  const canonical = toCanonicalMalaysiaPhone(senderPhone);
+  const rows = await runWhatsappAgentSql<{ direction: string; text_content: string | null }>(
+    `
+      SELECT direction, text_content
+      FROM et_messages
+      WHERE channel = 'whatsapp'
+        AND (
+          (direction = 'inbound' AND sender_phone = $1)
+          OR (direction = 'outbound' AND recipient_phone = $1)
+        )
+      ORDER BY id DESC
+      LIMIT $2
+    `,
+    [canonical, limit],
+  );
+
+  return rows
+    .reverse()
+    .filter((row) => (row.text_content || "").trim())
+    .map((row) => ({
+      role: row.direction === "inbound" ? ("user" as const) : ("assistant" as const),
+      text: (row.text_content || "").trim(),
+    }));
 }
 
 export async function insertEtMessage(input: {
