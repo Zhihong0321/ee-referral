@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getWhatsappAgentRuntimeConfig, runWhatsappAgentSql } from "@/lib/agent/whatsapp-data";
+import { ensureWhatsappAgentWorker } from "@/lib/agent/worker-start";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -47,6 +48,7 @@ async function fetchJson(url: string, init?: RequestInit) {
 }
 
 export async function GET() {
+  const worker = ensureWhatsappAgentWorker();
   const config = getWhatsappAgentRuntimeConfig();
   const baileysBaseUrl = config.baileysBaseUrl.replace(/\/$/, "");
   const sessionId = config.sessionId;
@@ -61,6 +63,7 @@ export async function GET() {
       sessionId,
       tenantId: config.tenantId,
       workerPollEnabled: process.env.WHATSAPP_AGENT_BAILEYS_POLL !== "false",
+      embeddedWorker: worker,
       watchedPhones: (process.env.WHATSAPP_AGENT_WATCH_PHONES || process.env.WHATSAPP_AGENT_SUPER_ADMIN_PHONES || "601121000099")
         .split(",")
         .map((value) => value.replace(/\D/g, ""))

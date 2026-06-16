@@ -14,6 +14,7 @@ import {
   sendWhatsappText,
 } from "@/lib/agent/whatsapp-data";
 import { runWhatsappAgentTurn } from "@/lib/agent/whatsapp-flow";
+import { ensureWhatsappAgentWorker } from "@/lib/agent/worker-start";
 import { toCanonicalMalaysiaPhone } from "@/lib/phone-normalization";
 
 export const runtime = "nodejs";
@@ -49,6 +50,8 @@ function isAuthorized(request: Request) {
 }
 
 export async function POST(request: Request) {
+  ensureWhatsappAgentWorker();
+
   if (!isAuthorized(request)) {
     return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
   }
