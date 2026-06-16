@@ -36,7 +36,7 @@ export type WhatsappLeadDraft = {
 
 export type WhatsappLeadField = keyof WhatsappLeadDraft;
 
-export type WhatsappUpdateField = "leadName" | "leadMobileNumber" | "area";
+export type WhatsappUpdateField = "leadName" | "leadMobileNumber" | "area" | "preferredAgent";
 
 export type WhatsappUpdateDraft = {
   referralId: number;
@@ -310,6 +310,48 @@ export async function appendConversation(senderPhone: string, newTurns: Conversa
     `,
     [config.tenantId, config.sessionId, canonicalPhone, JSON.stringify(combined)],
   );
+}
+
+export type WhatsappAgentOption = { id: string; name: string };
+
+// Sales agents who can be set as a lead's preferred agent. Mirrors the portal's
+// listAgentOptions: rows in "user" with a sales access level (when that column
+// exists). The preferred agent is stored on referral.linked_agent.
+export async function listWhatsappAgents(): Promise<WhatsappAgentOption[]> {
+  const caps = await runWhatsappAgentSql<{ has_user_table: boolean; has_access_level: boolean }>(
+    `
+      SELECT
+        EXISTS (
+          SELECT 1 FROM information_schema.tables
+          WHERE table_schema = 'public' AND table_name = 'user'
+        ) AS has_user_table,
+        EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'public' AND table_name = 'user' AND column_name = 'access_level'
+        ) AS has_access_level
+    `,
+  );
+
+  if (!caps[0]?.has_user_table) {
+    return [];
+  }
+
+  const salesFilter = caps[0]?.has_access_level
+    ? "AND EXISTS (SELECT 1 FROM unnest(u.access_level) AS x WHERE LOWER(x) LIKE '%sales%')"
+    : "";
+
+  const rows = await runWhatsappAgentSql<{ id: number; name: string | null }>(
+    `
+      SELECT u.id, u.name
+      FROM "user" u
+      WHERE u.name IS NOT NULL
+        AND BTRIM(u.name) <> ''
+        ${salesFilter}
+      ORDER BY u.name ASC
+    `,
+  );
+
+  return rows.map((row) => ({ id: String(row.id), name: (row.name || "").trim() })).filter((agent) => agent.name);
 }
 
 export async function resolveOrCreateReferrerByWhatsappPhone(senderPhone: string): Promise<WhatsappReferrerAccount> {
@@ -605,9 +647,14 @@ export async function listWhatsappReferralsByReferrerPhone(phone: string, limit 
   return rows.map(mapAdminReferral);
 }
 
-export async function createWhatsappReferral(referrer: WhatsappReferrerAccount, draft: WhatsappLeadDraft) {
+export async function createWhatsappReferral(
+  referrer: WhatsappReferrerAccount,
+  draft: WhatsappLeadDraft,
+  options: { preferredAgentId?: string | null } = {},
+) {
   const leadCustomerId = `cust_${crypto.randomUUID().replace(/-/g, "").slice(0, 12)}`;
   const referralBubbleId = `reflead_${crypto.randomUUID().replace(/-/g, "").slice(0, 12)}`;
+  const preferredAgentId = options.preferredAgentId?.trim() || null;
   // Relationship/project type are not collected over WhatsApp; default them to
   // neutral values so the row stays valid and managers can triage later.
   const defaultRelationship = "Other";
@@ -665,7 +712,7 @@ export async function createWhatsappReferral(referrer: WhatsappReferrerAccount, 
         'Pending',
         inserted_customer.customer_id,
         $12,
-        NULL
+        $13
       FROM inserted_customer
       RETURNING id
     `,
@@ -682,6 +729,7 @@ export async function createWhatsappReferral(referrer: WhatsappReferrerAccount, 
       referralBubbleId,
       referrer.customerId,
       defaultProjectType,
+      preferredAgentId,
     ],
   );
 
@@ -696,6 +744,7 @@ export async function updateWhatsappReferral(
     leadName: { referralColumn: "name", customerColumn: "name" },
     leadMobileNumber: { referralColumn: "mobile_number", customerColumn: "phone" },
     area: { customerColumn: "state", noteKey: "leadState" },
+    preferredAgent: { referralColumn: "linked_agent" },
   };
   const mapping = fieldMap[update.field];
 
