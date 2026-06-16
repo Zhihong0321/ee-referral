@@ -461,6 +461,32 @@ function mapReferralRow(
   };
 }
 
+export async function findReferrerAccountByPhone(phoneInput: string): Promise<ReferrerAccount | null> {
+  const phone = normalizePhone(phoneInput);
+
+  if (!phone) {
+    return null;
+  }
+
+  const existing = await query<ReferrerAccountRow>(
+    `
+      SELECT customer_id, name, phone, profile_picture, notes, remark
+      FROM customer
+      WHERE phone = $1
+        AND remark = ANY($2::text[])
+      ORDER BY id DESC
+      LIMIT 1
+    `,
+    [phone, [REFERRAL_MARKER, LEGACY_REFERRER_MARKER]],
+  );
+
+  if (existing.rows.length === 0) {
+    return null;
+  }
+
+  return buildReferrerAccount(existing.rows[0], phone);
+}
+
 export async function findOrCreateReferrerAccount(authUser: AuthHubUser): Promise<ReferrerAccount> {
   const phone = normalizePhone(authUser.phone);
 

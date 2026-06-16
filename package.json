@@ -7,11 +7,13 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "whatsapp:worker": "node scripts/whatsapp-agent-worker.mjs",
     "docker:build": "docker build -t ee-referral .",
     "docker:run": "docker run --rm -p 3000:3000 --env-file .env.local ee-referral"
   },
   "dependencies": {
     "jsonwebtoken": "^9.0.3",
+    "mmx-cli": "^1.0.16",
     "next": "16.1.6",
     "pg": "^8.18.0",
     "react": "19.2.3",
