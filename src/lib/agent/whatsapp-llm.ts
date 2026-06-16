@@ -181,7 +181,7 @@ function sanitizeWhatsappReply(reply: string) {
     .replace(/^Available actions:\s*/gim, "")
     .trim();
 
-  if (!cleaned || /Tool result|Next action|Available actions/i.test(cleaned)) {
+  if (!cleaned || /Tool result|Next action|Available actions|^Role:|^Scope:|^Boundary:/im.test(cleaned)) {
     return "";
   }
 
