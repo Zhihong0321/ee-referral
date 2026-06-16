@@ -181,7 +181,7 @@ function sanitizeWhatsappReply(reply: string) {
     .replace(/^Available actions:\s*/gim, "")
     .trim();
 
-  if (!cleaned || /Tool result|Next action|Available actions|^Role:|^Scope:|^Boundary:/im.test(cleaned)) {
+  if (!cleaned || /Tool result|Next action|Available actions|User-facing|^Role:|^Scope:|^Boundary:/im.test(cleaned)) {
     return "";
   }
 
@@ -207,7 +207,7 @@ function buildFallbackWhatsappReply(toolResult: string) {
   const askForNewValue = result.match(/Ask for the new ([^.]+)\./i)?.[1]?.trim();
   if (askForNewValue) return `What should the new ${askForNewValue} be?`;
 
-  if (/Show.*menu/i.test(result)) {
+  if (/Show.*menu|Help menu requested/i.test(result)) {
     return [
       "I am the Referral Assistant. I can help with referral leads only.",
       "",

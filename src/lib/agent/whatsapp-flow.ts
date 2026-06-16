@@ -815,15 +815,12 @@ export async function runWhatsappAgentTurn(input: {
       referrer,
       userMessage: message,
       toolResult: [
-        "Tool result: Show Referral Assistant menu.",
-        "Role: Referral Assistant.",
-        "Scope: help referrers add leads, record leads in the database through the system flow, check their leads, show lead details, and update lead information.",
-        "Boundary: do not talk about other topics.",
-        "Available actions:",
-        '- Reply "add lead" to create a referral.',
-        '- Reply "my leads" to see referral leads.',
-        '- Reply "show lead 1" after listing leads.',
-        '- Reply "update lead 1" to edit a lead.',
+        "Tool result: Help menu requested.",
+        'User-facing reply: I am the Referral Assistant. I can help with referral leads only.',
+        'User-facing action: Send a phone number or reply "add lead" to add a referral.',
+        'User-facing action: Reply "my leads" to check leads.',
+        'User-facing action: Reply "show lead 1" to view one lead.',
+        'User-facing action: Reply "update lead 1" to edit a lead.',
       ].join("\n"),
     });
   }
