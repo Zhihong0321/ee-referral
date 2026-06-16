@@ -809,6 +809,21 @@ export async function insertEtMessage(input: {
   );
 }
 
+export async function hasEtMessage(externalMessageId: string, direction?: "inbound" | "outbound") {
+  const rows = await runWhatsappAgentSql<{ id: number }>(
+    `
+      SELECT id
+      FROM et_messages
+      WHERE external_message_id = $1
+        AND ($2::text IS NULL OR direction = $2)
+      LIMIT 1
+    `,
+    [externalMessageId, direction || null],
+  );
+
+  return Boolean(rows[0]);
+}
+
 export async function sendWhatsappText(toPhone: string, text: string) {
   const config = getAgentConfig();
   const payloads = [
