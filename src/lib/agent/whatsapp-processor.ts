@@ -1,4 +1,5 @@
 import {
+  appendConversation,
   ensureChannelSession,
   hasEtMessage,
   insertEtMessage,
@@ -90,6 +91,11 @@ export async function processWhatsappAgentMessages(
           recipientPhone: senderPhone,
           channelSessionId: channelSession.id,
         });
+
+        await appendConversation(senderPhone, [
+          { role: "user", text: message.text },
+          { role: "assistant", text: reply },
+        ]);
       }
 
       results.push({

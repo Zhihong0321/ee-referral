@@ -256,6 +256,62 @@ export async function saveAgentState(senderPhone: string, state: WhatsappAgentSt
   );
 }
 
+export type ConversationTurn = { role: "user" | "assistant"; text: string };
+
+const MAX_CONVERSATION_TURNS = 16;
+
+// Conversation memory for the LLM agent. Stored in et_channel_sessions.metadata
+// (proven reliable) rather than relying on et_messages reads.
+export async function loadConversation(senderPhone: string): Promise<ConversationTurn[]> {
+  const session = await ensureChannelSession();
+  const metadata = (session.metadata || {}) as Record<string, unknown>;
+  const conversations = (metadata.conversations || {}) as Record<string, unknown>;
+  const canonicalPhone = toCanonicalMalaysiaPhone(senderPhone);
+  const turns = conversations[canonicalPhone];
+
+  if (!Array.isArray(turns)) {
+    return [];
+  }
+
+  return turns
+    .filter((turn): turn is ConversationTurn => Boolean(turn) && typeof (turn as ConversationTurn).text === "string")
+    .map((turn) => ({ role: turn.role === "assistant" ? ("assistant" as const) : ("user" as const), text: turn.text.trim() }))
+    .filter((turn) => turn.text);
+}
+
+export async function appendConversation(senderPhone: string, newTurns: ConversationTurn[]) {
+  if (newTurns.length === 0) return;
+
+  const config = getAgentConfig();
+  const canonicalPhone = toCanonicalMalaysiaPhone(senderPhone);
+  const existing = await loadConversation(senderPhone);
+  const combined = [...existing, ...newTurns].slice(-MAX_CONVERSATION_TURNS);
+
+  await ensureChannelSession();
+  await runWhatsappAgentSql(
+    `
+      UPDATE et_channel_sessions
+      SET
+        metadata = jsonb_set(
+          jsonb_set(
+            COALESCE(metadata, '{}'::jsonb),
+            '{conversations}',
+            COALESCE(metadata->'conversations', '{}'::jsonb),
+            true
+          ),
+          ARRAY['conversations', $3],
+          $4::jsonb,
+          true
+        ),
+        updated_at = NOW()
+      WHERE tenant_id = $1
+        AND channel_type = 'whatsapp'
+        AND session_identifier = $2
+    `,
+    [config.tenantId, config.sessionId, canonicalPhone, JSON.stringify(combined)],
+  );
+}
+
 export async function resolveOrCreateReferrerByWhatsappPhone(senderPhone: string): Promise<WhatsappReferrerAccount> {
   const candidates = buildPhoneMatchCandidates(senderPhone);
   const values = candidates.map((candidate) => candidate.value);
@@ -711,33 +767,6 @@ export async function updateWhatsappReferral(
     referralId: update.referralId,
     leadName: update.field === "leadName" ? update.value : existing.lead_name,
   };
-}
-
-// Recent conversation for one phone, oldest-first, for feeding the LLM agent.
-export async function loadRecentConversation(senderPhone: string, limit = 12) {
-  const canonical = toCanonicalMalaysiaPhone(senderPhone);
-  const rows = await runWhatsappAgentSql<{ direction: string; text_content: string | null }>(
-    `
-      SELECT direction, text_content
-      FROM et_messages
-      WHERE channel = 'whatsapp'
-        AND (
-          (direction = 'inbound' AND sender_phone = $1)
-          OR (direction = 'outbound' AND recipient_phone = $1)
-        )
-      ORDER BY id DESC
-      LIMIT $2
-    `,
-    [canonical, limit],
-  );
-
-  return rows
-    .reverse()
-    .filter((row) => (row.text_content || "").trim())
-    .map((row) => ({
-      role: row.direction === "inbound" ? ("user" as const) : ("assistant" as const),
-      text: (row.text_content || "").trim(),
-    }));
 }
 
 export async function insertEtMessage(input: {

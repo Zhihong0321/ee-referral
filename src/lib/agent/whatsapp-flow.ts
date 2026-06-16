@@ -16,7 +16,7 @@ import { COMPANY_LEGAL_NAME, REFERRAL_TERMS } from "@/lib/terms";
 import {
   createWhatsappReferral,
   listWhatsappReferrals,
-  loadRecentConversation,
+  loadConversation,
   resolveOrCreateReferrerByWhatsappPhone,
   saveReferrerProfile,
   updateWhatsappReferral,
@@ -287,7 +287,7 @@ export async function runWhatsappAgentTurn(input: { senderPhone: string; text: s
   const referrer = await resolveOrCreateReferrerByWhatsappPhone(input.senderPhone);
   const [leads, history] = await Promise.all([
     listWhatsappReferrals(referrer.customerId),
-    loadRecentConversation(input.senderPhone, 12),
+    loadConversation(input.senderPhone),
   ]);
 
   const ctx: ToolContext = { senderPhone: input.senderPhone, referrer, leads };
