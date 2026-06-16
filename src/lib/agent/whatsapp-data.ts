@@ -826,6 +826,17 @@ export async function hasEtMessage(externalMessageId: string, direction?: "inbou
 
 export async function sendWhatsappText(toPhone: string, text: string) {
   const config = getAgentConfig();
+  const baileysBaseUrls = Array.from(
+    new Set(
+      [
+        config.baileysBaseUrl,
+        "https://ee-baileys-production.up.railway.app",
+        "https://ee-baileys-2.up.railway.app",
+      ]
+        .map((value) => value.replace(/\/$/, ""))
+        .filter(Boolean),
+    ),
+  );
   const payloads = [
     { sessionId: config.sessionId, to: toPhone, text },
     { sessionId: config.sessionId, jid: `${toPhone}@s.whatsapp.net`, text },
@@ -833,21 +844,23 @@ export async function sendWhatsappText(toPhone: string, text: string) {
   ];
   let lastError = "";
 
-  for (const payload of payloads) {
-    const response = await fetch(`${config.baileysBaseUrl}/messages/send`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(payload),
-    });
-    const responseText = await response.text();
+  for (const baileysBaseUrl of baileysBaseUrls) {
+    for (const payload of payloads) {
+      const response = await fetch(`${baileysBaseUrl}/messages/send`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+      const responseText = await response.text();
 
-    if (response.ok) {
-      return { payload, response: responseText ? JSON.parse(responseText) : null };
+      if (response.ok) {
+        return { baileysBaseUrl, payload, response: responseText ? JSON.parse(responseText) : null };
+      }
+
+      lastError = `${baileysBaseUrl}: ${responseText || response.statusText}`;
     }
-
-    lastError = responseText || response.statusText;
   }
 
   throw new Error(`Baileys send failed: ${lastError}`);
