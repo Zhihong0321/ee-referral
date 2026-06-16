@@ -5,9 +5,8 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "node scripts/start-with-whatsapp-worker.mjs",
+    "start": "next start",
     "lint": "eslint",
-    "whatsapp:worker": "node scripts/whatsapp-agent-worker.mjs",
     "docker:build": "docker build -t ee-referral .",
     "docker:run": "docker run --rm -p 3000:3000 --env-file .env.local ee-referral"
   },

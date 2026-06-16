@@ -85,6 +85,32 @@ Railway environment variables to set:
 - `APP_BASE_URL`
 - `AUTH_HUB_URL`
 
+## WhatsApp Agent Webhook
+
+Inbound WhatsApp messages can trigger the referral AI agent through:
+
+```text
+POST /api/whatsapp-agent/webhook
+```
+
+The route accepts Meta WhatsApp Cloud API webhook payloads, Baileys-style `messages` arrays, or a simple normalized payload:
+
+```json
+{
+  "externalMessageId": "msg_123",
+  "senderPhone": "60123456789",
+  "recipientPhone": "60182920127",
+  "messageType": "text",
+  "text": "add lead"
+}
+```
+
+For Meta webhook verification, set `WHATSAPP_AGENT_WEBHOOK_VERIFY_TOKEN`; the route responds to `hub.challenge` on `GET /api/whatsapp-agent/webhook`.
+
+Every webhook request is logged as structured JSON in the app server logs with event names like `whatsapp_agent_webhook_post_received`, `whatsapp_agent_webhook_post_ignored`, and `whatsapp_agent_webhook_post_processed`.
+
+The existing internal processor remains available at `POST /api/whatsapp-agent/process` for polling `wa_inbound_inbox` or manually sending a normalized `messages` array.
+
 ## Auth flow used
 
 1. User enters app dashboard.

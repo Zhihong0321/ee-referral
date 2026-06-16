@@ -19,7 +19,11 @@ import {
   type WhatsappReferrerAccount,
   type WhatsappUpdateField,
 } from "@/lib/agent/whatsapp-data";
-import { classifyWhatsappIntent, polishWhatsappReply } from "@/lib/agent/whatsapp-llm";
+
+// IMPORTANT: Every string returned from this module is sent to the user verbatim.
+// There is NO LLM "polish" step. Do not put internal labels, tool names, role
+// descriptions, or scaffolding ("Tool result:", "Next action:", "Role:", etc.)
+// into any returned string. Author replies exactly as the user should read them.
 
 const FIELD_SEQUENCE: WhatsappLeadField[] = [
   "leadName",
@@ -32,6 +36,15 @@ const FIELD_SEQUENCE: WhatsappLeadField[] = [
   "remark",
 ];
 const OPTIONAL_FIELDS = new Set<WhatsappLeadField>(["leadCity", "leadAddress", "remark"]);
+
+const MENU = [
+  "I'm the Referral Assistant. I help you manage your referral leads.",
+  "",
+  '• Reply "add lead" to submit a new referral',
+  '• Reply "my leads" to see your leads',
+  '• Reply "lead 1" to view a lead\'s details',
+  '• Reply "update lead 1" to edit a lead',
+].join("\n");
 
 function normalizeText(value: string) {
   return value.trim().toLowerCase();
@@ -171,7 +184,8 @@ function wantsLeadDetail(message: string) {
     text.includes("查看lead") ||
     text.includes("查看 lead") ||
     text.includes("lead详情") ||
-    text.includes("lead 详情")
+    text.includes("lead 详情") ||
+    /^lead\s+\d+$/.test(text)
   );
 }
 
@@ -214,18 +228,18 @@ function getNextField(draft: Partial<WhatsappLeadDraft>) {
   return null;
 }
 
-function describeField(field: WhatsappLeadField) {
+function askField(field: WhatsappLeadField) {
   switch (field) {
     case "leadName":
-      return "What is the lead name?";
+      return "What is the lead's name?";
     case "leadMobileNumber":
-      return "What is the lead mobile number?";
+      return "What is the lead's mobile number?";
     case "leadState":
       return "Which state is the lead in?";
     case "leadCity":
       return 'Which city is the lead in? Reply "skip" if not needed.';
     case "leadAddress":
-      return 'What is the lead address? Reply "skip" if not needed.';
+      return 'What is the lead\'s address? Reply "skip" if not needed.';
     case "relationship":
       return `What is your relationship to the lead?\nOptions: ${RELATIONSHIP_OPTIONS.join(", ")}`;
     case "projectType":
@@ -238,9 +252,9 @@ function describeField(field: WhatsappLeadField) {
 function describeUpdateField(field: WhatsappUpdateField) {
   switch (field) {
     case "leadName":
-      return "lead name";
+      return "name";
     case "leadMobileNumber":
-      return "lead mobile number";
+      return "mobile number";
     case "leadState":
       return "state";
     case "leadCity":
@@ -255,6 +269,8 @@ function describeUpdateField(field: WhatsappUpdateField) {
       return "remark";
   }
 }
+
+const UPDATE_FIELD_LIST = "name, mobile, state, city, address, relationship, project, remark";
 
 function parseUpdateField(message: string): WhatsappUpdateField | null {
   const text = normalizeText(message);
@@ -277,115 +293,131 @@ function validateField(field: WhatsappLeadField, rawValue: string) {
 
   switch (field) {
     case "leadName":
-      return value.length >= 2 ? { ok: true as const, value } : { ok: false as const, error: "Lead name must be at least 2 characters." };
+      return value.length >= 2 ? { ok: true as const, value } : { ok: false as const, error: "The name must be at least 2 characters." };
     case "leadMobileNumber": {
       const canonical = toCanonicalMalaysiaPhone(value);
-      return canonical.length >= 8 ? { ok: true as const, value: canonical } : { ok: false as const, error: "Lead mobile number looks too short." };
+      return canonical.length >= 8 ? { ok: true as const, value: canonical } : { ok: false as const, error: "That mobile number looks too short." };
     }
     case "leadState":
-      return value.length >= 2 ? { ok: true as const, value } : { ok: false as const, error: "Lead state is required." };
+      return value.length >= 2 ? { ok: true as const, value } : { ok: false as const, error: "Please tell me the state." };
     case "leadCity":
     case "leadAddress":
     case "remark":
       return { ok: true as const, value: isSkip(value) ? "" : value };
     case "relationship": {
       const match = RELATIONSHIP_OPTIONS.find((option) => normalizeText(option) === normalizeText(value));
-      return match && isAllowedRelationship(match) ? { ok: true as const, value: match } : { ok: false as const, error: `Use one of: ${RELATIONSHIP_OPTIONS.join(", ")}` };
+      return match && isAllowedRelationship(match) ? { ok: true as const, value: match } : { ok: false as const, error: `Please choose one of: ${RELATIONSHIP_OPTIONS.join(", ")}` };
     }
     case "projectType": {
       const match = PROJECT_TYPE_OPTIONS.find((option) => normalizeText(option) === normalizeText(value));
-      return match && isAllowedProjectType(match) ? { ok: true as const, value: match } : { ok: false as const, error: `Use one of: ${PROJECT_TYPE_OPTIONS.join(", ")}` };
+      return match && isAllowedProjectType(match) ? { ok: true as const, value: match } : { ok: false as const, error: `Please choose one of: ${PROJECT_TYPE_OPTIONS.join(", ")}` };
     }
   }
 }
 
 function draftSummary(draft: Partial<WhatsappLeadDraft>) {
   return [
-    `Lead name: ${draft.leadName || "-"}`,
+    `Name: ${draft.leadName || "-"}`,
     `Mobile: ${draft.leadMobileNumber || "-"}`,
     `State: ${draft.leadState || "-"}`,
     `City: ${draft.leadCity || "-"}`,
     `Address: ${draft.leadAddress || "-"}`,
     `Relationship: ${draft.relationship || "-"}`,
-    `Project type: ${draft.projectType || "-"}`,
+    `Project: ${draft.projectType || "-"}`,
     `Remark: ${draft.remark || "-"}`,
+  ].join("\n");
+}
+
+function confirmPrompt(draft: Partial<WhatsappLeadDraft>) {
+  return [
+    "Please review this lead:",
+    "",
+    draftSummary(draft),
+    "",
+    "Reply CONFIRM to save, or CANCEL to discard.",
   ].join("\n");
 }
 
 async function buildLeadListReply(referrer: WhatsappReferrerAccount, senderPhone: string) {
   const referrals = await listWhatsappReferrals(referrer.customerId);
-  const listState = referrals.slice(0, 20).map((lead, index) => ({
-    index: index + 1,
-    referralId: lead.id,
-    leadName: lead.leadName,
-  }));
 
   await saveAgentState(senderPhone, {
     ...EMPTY_WHATSAPP_AGENT_STATE,
-    lastLeadList: listState,
+    lastLeadList: referrals.slice(0, 20).map((lead, index) => ({ index: index + 1, referralId: lead.id, leadName: lead.leadName })),
   });
 
   if (referrals.length === 0) {
-    return 'Tool result: No referral leads found under this WhatsApp number. Next action: user can reply "add lead" to create one.';
+    return 'You don\'t have any referral leads yet.\n\nReply "add lead" to submit one.';
   }
 
-  const lines = referrals.slice(0, 10).map((lead, index) => `${index + 1}. ${lead.leadName} | ${lead.leadMobile || "-"} | ${lead.status || "Pending"}`);
-  return `Tool result: Found ${referrals.length} lead(s):\n${lines.join("\n")}\n\nNext actions: user can reply "show lead 1" to inspect one, or "add lead" to create a new lead.`;
+  const lines = referrals
+    .slice(0, 10)
+    .map((lead, index) => `${index + 1}. ${lead.leadName} — ${lead.leadMobile || "no mobile"} — ${lead.status || "Pending"}`);
+
+  return [
+    referrals.length === 1 ? "You have 1 referral lead:" : `You have ${referrals.length} referral leads:`,
+    "",
+    lines.join("\n"),
+    "",
+    'Reply "lead 1" to view details, or "add lead" to submit another.',
+  ].join("\n");
 }
 
 async function buildAdminLeadListReply(senderPhone: string) {
   const referrals = await listAllWhatsappReferrals(30);
-  const listState = referrals.slice(0, 30).map((lead, index) => ({
-    index: index + 1,
-    referralId: lead.id,
-    leadName: lead.leadName,
-  }));
 
   await saveAgentState(senderPhone, {
     ...EMPTY_WHATSAPP_AGENT_STATE,
-    lastLeadList: listState,
+    lastLeadList: referrals.slice(0, 30).map((lead, index) => ({ index: index + 1, referralId: lead.id, leadName: lead.leadName })),
   });
 
   if (referrals.length === 0) {
-    return "Tool result: No submitted referral leads found in the system.";
+    return "There are no submitted referral leads in the system yet.";
   }
 
   const lines = referrals.slice(0, 15).map((lead, index) => {
     const referrerLabel = [lead.referrerName, lead.referrerPhone].map((value) => value?.trim()).filter(Boolean).join(" / ");
-    return `${index + 1}. ${lead.leadName} | ${lead.leadMobile || "-"} | ${lead.status || "Pending"} | Referrer: ${referrerLabel || lead.referrerCustomerId}`;
+    return `${index + 1}. ${lead.leadName} — ${lead.leadMobile || "no mobile"} — ${lead.status || "Pending"} (by ${referrerLabel || lead.referrerCustomerId})`;
   });
 
-  return `Tool result: Super admin all-referral view. Showing ${Math.min(referrals.length, 15)} latest lead(s):\n${lines.join("\n")}\n\nNext actions: user can reply "show lead 1" for detail, or "my leads" for only their own referral account.`;
+  return [
+    `All referral leads (showing ${Math.min(referrals.length, 15)} latest):`,
+    "",
+    lines.join("\n"),
+    "",
+    'Reply "lead 1" for details, or "my leads" to see only your own.',
+  ].join("\n");
 }
 
 async function buildAdminLeadListByReferrerPhoneReply(senderPhone: string, referrerPhone: string) {
   const referrals = await listWhatsappReferralsByReferrerPhone(referrerPhone, 30);
-  const listState = referrals.slice(0, 30).map((lead, index) => ({
-    index: index + 1,
-    referralId: lead.id,
-    leadName: lead.leadName,
-  }));
 
   await saveAgentState(senderPhone, {
     ...EMPTY_WHATSAPP_AGENT_STATE,
-    lastLeadList: listState,
+    lastLeadList: referrals.slice(0, 30).map((lead, index) => ({ index: index + 1, referralId: lead.id, leadName: lead.leadName })),
   });
 
   if (referrals.length === 0) {
-    return `Tool result: No submitted referral leads found for referrer phone ${referrerPhone}.`;
+    return `No referral leads found for referrer ${referrerPhone}.`;
   }
 
   const referrerLabel = [referrals[0].referrerName, referrals[0].referrerPhone].map((value) => value?.trim()).filter(Boolean).join(" / ");
-  const lines = referrals.slice(0, 15).map((lead, index) => `${index + 1}. ${lead.leadName} | ${lead.leadMobile || "-"} | ${lead.status || "Pending"}`);
+  const lines = referrals.slice(0, 15).map((lead, index) => `${index + 1}. ${lead.leadName} — ${lead.leadMobile || "no mobile"} — ${lead.status || "Pending"}`);
 
-  return `Tool result: Super admin referrer-filter view.\nReferrer: ${referrerLabel || referrals[0].referrerCustomerId}\nShowing ${Math.min(referrals.length, 15)} lead(s):\n${lines.join("\n")}\n\nNext action: user can reply "show lead 1" for detail.`;
+  return [
+    `Leads by ${referrerLabel || referrals[0].referrerCustomerId} (showing ${Math.min(referrals.length, 15)}):`,
+    "",
+    lines.join("\n"),
+    "",
+    'Reply "lead 1" for details.',
+  ].join("\n");
 }
 
 async function buildLeadDetailReply(referrer: WhatsappReferrerAccount, message: string) {
   const adminMode = isWhatsappSuperAdminPhone(referrer.phone);
   const referrals = adminMode ? await listAllWhatsappReferrals(30) : await listWhatsappReferrals(referrer.customerId);
   const text = normalizeText(message);
-  const indexMatch = text.match(/\blead\s+(\d+)\b/);
+  const indexMatch = text.match(/\blead\s+(\d+)\b/) || text.match(/^(\d+)$/);
   let selected = null;
 
   if (indexMatch) {
@@ -400,21 +432,19 @@ async function buildLeadDetailReply(referrer: WhatsappReferrerAccount, message: 
   }
 
   if (!selected) {
-    return 'Tool result: Could not match that request to a current lead. Next action: ask user to reply "my leads" first, then "show lead 1".';
+    return 'I couldn\'t match that to a lead. Reply "my leads" first, then "lead 1".';
   }
 
-  const location = [selected.leadState, selected.leadCity, selected.leadAddress].map((value) => value?.trim()).filter(Boolean).join(" | ");
+  const location = [selected.leadState, selected.leadCity, selected.leadAddress].map((value) => value?.trim()).filter(Boolean).join(", ");
   const referrerInfo =
     isAdminReferralRow(selected)
       ? [
           `Referrer: ${selected.referrerName || "-"}`,
           `Referrer phone: ${selected.referrerPhone || "-"}`,
-          `Referrer ID: ${selected.referrerCustomerId}`,
         ]
       : [];
 
   return [
-    "Tool result: Lead detail found.",
     `Lead: ${selected.leadName}`,
     `Mobile: ${selected.leadMobile || "-"}`,
     `Status: ${selected.status || "Pending"}`,
@@ -454,11 +484,7 @@ function selectLeadFromMessage(message: string, referrals: Awaited<ReturnType<ty
 async function runLeadUpdate(senderPhone: string, referrer: WhatsappReferrerAccount, state: WhatsappAgentState, message: string) {
   if (isCancel(message)) {
     await saveAgentState(senderPhone, EMPTY_WHATSAPP_AGENT_STATE);
-    return polishWhatsappReply({
-      referrer,
-      userMessage: message,
-      toolResult: 'Tool result: Lead update cancelled. Next action: user can reply "my leads" or "update lead 1".',
-    });
+    return 'No problem, I cancelled the update. Reply "my leads" or "update lead 1" anytime.';
   }
 
   const referrals = await listWhatsappReferrals(referrer.customerId);
@@ -467,17 +493,24 @@ async function runLeadUpdate(senderPhone: string, referrer: WhatsappReferrerAcco
     const selected = selectLeadFromMessage(message, referrals);
 
     if (!selected) {
-      const lines = referrals.slice(0, 10).map((lead, index) => `${index + 1}. ${lead.leadName} | ${lead.leadMobile || "-"} | ${lead.status || "Pending"}`);
+      const lines = referrals.slice(0, 10).map((lead, index) => `${index + 1}. ${lead.leadName} — ${lead.leadMobile || "no mobile"} — ${lead.status || "Pending"}`);
       await saveAgentState(senderPhone, {
         ...EMPTY_WHATSAPP_AGENT_STATE,
         mode: "selecting_update_lead",
         lastLeadList: referrals.slice(0, 20).map((lead, index) => ({ index: index + 1, referralId: lead.id, leadName: lead.leadName })),
       });
-      return polishWhatsappReply({
-        referrer,
-        userMessage: message,
-        toolResult: `Tool result: User wants to update a lead but no target was selected.\nCurrent leads:\n${lines.join("\n") || "No leads found."}\nAsk user to reply with a lead number, for example "lead 1".`,
-      });
+
+      if (referrals.length === 0) {
+        return 'You don\'t have any leads to update yet.\n\nReply "add lead" to create one.';
+      }
+
+      return [
+        "Which lead do you want to update?",
+        "",
+        lines.join("\n"),
+        "",
+        'Reply with the number, e.g. "1".',
+      ].join("\n");
     }
 
     const field = parseUpdateField(message);
@@ -486,24 +519,17 @@ async function runLeadUpdate(senderPhone: string, referrer: WhatsappReferrerAcco
       mode: field ? "collecting_update_value" : "selecting_update_field",
       update: { referralId: selected.id, field: field || undefined },
     });
-    return polishWhatsappReply({
-      referrer,
-      userMessage: message,
-      toolResult: field
-        ? `Tool result: Selected lead ${selected.leadName}. Ask for the new ${describeUpdateField(field)}.`
-        : `Tool result: Selected lead ${selected.leadName}. Ask which field to update. Available fields: name, mobile, state, city, address, relationship, project, remark.`,
-    });
+
+    return field
+      ? `Updating "${selected.leadName}". What is the new ${describeUpdateField(field)}?`
+      : `Updating "${selected.leadName}". Which field?\nOptions: ${UPDATE_FIELD_LIST}`;
   }
 
   if (state.mode === "selecting_update_lead") {
     const selected = selectLeadFromMessage(message, referrals);
 
     if (!selected) {
-      return polishWhatsappReply({
-        referrer,
-        userMessage: message,
-        toolResult: 'Tool result: Could not match the lead number/name. Ask user to reply with a lead number such as "lead 1".',
-      });
+      return 'I couldn\'t match that lead. Reply with a number from the list, e.g. "1".';
     }
 
     await saveAgentState(senderPhone, {
@@ -511,22 +537,15 @@ async function runLeadUpdate(senderPhone: string, referrer: WhatsappReferrerAcco
       mode: "selecting_update_field",
       update: { referralId: selected.id },
     });
-    return polishWhatsappReply({
-      referrer,
-      userMessage: message,
-      toolResult: `Tool result: Selected lead ${selected.leadName}. Ask which field to update. Available fields: name, mobile, state, city, address, relationship, project, remark.`,
-    });
+
+    return `Updating "${selected.leadName}". Which field?\nOptions: ${UPDATE_FIELD_LIST}`;
   }
 
   if (state.mode === "selecting_update_field") {
     const field = parseUpdateField(message);
 
     if (!field) {
-      return polishWhatsappReply({
-        referrer,
-        userMessage: message,
-        toolResult: "Tool result: Could not identify update field. Ask user to choose one: name, mobile, state, city, address, relationship, project, remark.",
-      });
+      return `Please choose a field to update.\nOptions: ${UPDATE_FIELD_LIST}`;
     }
 
     await saveAgentState(senderPhone, {
@@ -534,11 +553,8 @@ async function runLeadUpdate(senderPhone: string, referrer: WhatsappReferrerAcco
       mode: "collecting_update_value",
       update: { ...state.update, field },
     });
-    return polishWhatsappReply({
-      referrer,
-      userMessage: message,
-      toolResult: `Tool result: Update field selected: ${describeUpdateField(field)}. Ask for the new value.`,
-    });
+
+    return `What is the new ${describeUpdateField(field)}?`;
   }
 
   if (state.mode === "collecting_update_value") {
@@ -546,16 +562,12 @@ async function runLeadUpdate(senderPhone: string, referrer: WhatsappReferrerAcco
 
     if (!field || !state.update?.referralId) {
       await saveAgentState(senderPhone, EMPTY_WHATSAPP_AGENT_STATE);
-      return "I lost the update context. Please reply \"update lead 1\" to start again.";
+      return 'I lost track of that update. Reply "update lead 1" to start again.';
     }
 
     const parsed = validateField(field, message);
     if (!parsed.ok) {
-      return polishWhatsappReply({
-        referrer,
-        userMessage: message,
-        toolResult: `Tool result: Validation error: ${parsed.error}. Ask user for a valid ${describeUpdateField(field)}.`,
-      });
+      return `${parsed.error}\nWhat is the new ${describeUpdateField(field)}?`;
     }
 
     await saveAgentState(senderPhone, {
@@ -563,25 +575,25 @@ async function runLeadUpdate(senderPhone: string, referrer: WhatsappReferrerAcco
       mode: "confirming_update",
       update: { ...state.update, value: parsed.value },
     });
-    return polishWhatsappReply({
-      referrer,
-      userMessage: message,
-      toolResult: `Tool result: Ready to update lead ID ${state.update.referralId}. Field: ${describeUpdateField(field)}. New value: ${parsed.value}. Ask user to reply "CONFIRM" to save or "CANCEL" to stop.`,
-    });
+
+    return [
+      "Please confirm this update:",
+      "",
+      `Field: ${describeUpdateField(field)}`,
+      `New value: ${parsed.value}`,
+      "",
+      "Reply CONFIRM to save, or CANCEL to stop.",
+    ].join("\n");
   }
 
   if (state.mode === "confirming_update") {
     if (!isConfirm(message)) {
-      return polishWhatsappReply({
-        referrer,
-        userMessage: message,
-        toolResult: 'Tool result: Update is ready but not saved. Ask user to reply "CONFIRM" to save or "CANCEL" to stop.',
-      });
+      return 'The update isn\'t saved yet. Reply CONFIRM to save, or CANCEL to stop.';
     }
 
     if (!state.update?.referralId || !state.update.field || typeof state.update.value !== "string") {
       await saveAgentState(senderPhone, EMPTY_WHATSAPP_AGENT_STATE);
-      return "I lost the update context. Please reply \"update lead 1\" to start again.";
+      return 'I lost track of that update. Reply "update lead 1" to start again.';
     }
 
     const updated = await updateWhatsappReferral(referrer, {
@@ -590,89 +602,68 @@ async function runLeadUpdate(senderPhone: string, referrer: WhatsappReferrerAcco
       value: state.update.value,
     });
     await saveAgentState(senderPhone, EMPTY_WHATSAPP_AGENT_STATE);
-    return polishWhatsappReply({
-      referrer,
-      userMessage: message,
-      toolResult: `Tool result: Lead updated successfully.\nReferral ID: ${updated.referralId}\nLead: ${updated.leadName}\nUpdated field: ${describeUpdateField(state.update.field)}\nNew value: ${state.update.value}`,
-    });
+
+    return [
+      "✅ Lead updated.",
+      `Lead: ${updated.leadName}`,
+      `${describeUpdateField(state.update.field)}: ${state.update.value}`,
+    ].join("\n");
   }
 
-  return "Please reply \"my leads\", \"add lead\", or \"update lead 1\".";
+  return MENU;
 }
 
 async function runLeadCollection(senderPhone: string, referrer: WhatsappReferrerAccount, state: WhatsappAgentState, message: string) {
   if (isCancel(message)) {
     await saveAgentState(senderPhone, EMPTY_WHATSAPP_AGENT_STATE);
-    return polishWhatsappReply({
-      referrer,
-      userMessage: message,
-      toolResult: 'Tool result: Lead creation cancelled. Next action: user can reply "add lead" to start again.',
-    });
+    return 'No problem, I cancelled the new lead. Reply "add lead" when you want to start again.';
   }
 
   if (state.mode !== "idle" && isResetOrFrustration(message)) {
     await saveAgentState(senderPhone, EMPTY_WHATSAPP_AGENT_STATE);
-    return polishWhatsappReply({
-      referrer,
-      userMessage: message,
-      toolResult: 'Tool result: Lead draft cleared because the user is not continuing the lead form. Role: Referral Assistant. Explain that the assistant is ready again and only helps with referral leads. Suggested actions: "add lead", "my leads", "show lead 1", or send a lead phone number.',
-    });
+    return `I cleared the unfinished lead and I'm ready again.\n\n${MENU}`;
   }
 
   if (state.mode === "idle") {
-    const nextState: WhatsappAgentState = {
+    await saveAgentState(senderPhone, {
       mode: "collecting_lead",
       draft: {},
       nextField: "leadName",
-    };
-    await saveAgentState(senderPhone, nextState);
-    return polishWhatsappReply({
-      referrer,
-      userMessage: message,
-      toolResult: `Tool result: Started a new referral lead collection. Ask this exact next question: ${describeField("leadName")}`,
     });
+    return `Sure, let's add a referral.\n${askField("leadName")}`;
   }
 
   if (state.mode === "confirming_lead") {
     if (!isConfirm(message)) {
-      return polishWhatsappReply({
-        referrer,
-        userMessage: message,
-        toolResult: 'Tool result: Lead is ready but not saved yet. Ask user to reply "CONFIRM" to save this lead or "CANCEL" to stop.',
-      });
+      return confirmPrompt(state.draft);
     }
 
     const referralId = await createWhatsappReferral(referrer, state.draft as WhatsappLeadDraft);
     await saveAgentState(senderPhone, EMPTY_WHATSAPP_AGENT_STATE);
-    return polishWhatsappReply({
-      referrer,
-      userMessage: message,
-      toolResult: `Tool result: Lead saved successfully.\nReferral ID: ${referralId}\nLead: ${state.draft.leadName}\nMobile: ${state.draft.leadMobileNumber}`,
-    });
+
+    return [
+      "✅ Lead saved!",
+      `Reference ID: ${referralId}`,
+      `Name: ${state.draft.leadName}`,
+      `Mobile: ${state.draft.leadMobileNumber}`,
+      "",
+      'Reply "my leads" to see all your leads.',
+    ].join("\n");
   }
 
   const field = state.nextField || getNextField(state.draft);
   if (!field) {
-    const nextState: WhatsappAgentState = {
+    await saveAgentState(senderPhone, {
       mode: "confirming_lead",
       draft: state.draft,
       nextField: null,
-    };
-    await saveAgentState(senderPhone, nextState);
-    return polishWhatsappReply({
-      referrer,
-      userMessage: message,
-      toolResult: `Tool result: Lead draft complete. Ask user to review and reply "CONFIRM" to save or "CANCEL" to stop.\n\n${draftSummary(state.draft)}`,
     });
+    return confirmPrompt(state.draft);
   }
 
   const parsed = validateField(field, message);
   if (!parsed.ok) {
-    return polishWhatsappReply({
-      referrer,
-      userMessage: message,
-      toolResult: `Tool result: Validation error: ${parsed.error}\nAsk this exact next question: ${describeField(field)}`,
-    });
+    return `${parsed.error}\n${askField(field)}`;
   }
 
   const draft = {
@@ -682,17 +673,12 @@ async function runLeadCollection(senderPhone: string, referrer: WhatsappReferrer
   const nextField = getNextField(draft);
 
   if (!nextField) {
-    const nextState: WhatsappAgentState = {
+    await saveAgentState(senderPhone, {
       mode: "confirming_lead",
       draft,
       nextField: null,
-    };
-    await saveAgentState(senderPhone, nextState);
-    return polishWhatsappReply({
-      referrer,
-      userMessage: message,
-      toolResult: `Tool result: Lead draft complete. Ask user to review and reply "CONFIRM" to save or "CANCEL" to stop.\n\n${draftSummary(draft)}`,
     });
+    return confirmPrompt(draft);
   }
 
   await saveAgentState(senderPhone, {
@@ -700,11 +686,7 @@ async function runLeadCollection(senderPhone: string, referrer: WhatsappReferrer
     draft,
     nextField,
   });
-  return polishWhatsappReply({
-    referrer,
-    userMessage: message,
-    toolResult: `Tool result: Saved field "${field}" into draft. Ask this exact next question: ${describeField(nextField)}`,
-  });
+  return askField(nextField);
 }
 
 async function startPhoneFirstLeadCollection(senderPhone: string, referrer: WhatsappReferrerAccount, message: string) {
@@ -721,18 +703,15 @@ async function startPhoneFirstLeadCollection(senderPhone: string, referrer: What
     nextField: "leadName",
   });
 
-  return polishWhatsappReply({
-    referrer,
-    userMessage: message,
-    toolResult: [
-      "Tool result: Started a new referral lead collection from a phone number.",
-      `Saved lead mobile number: ${leadMobileNumber}`,
-      remark ? `Saved remark: ${remark}` : "",
-      'Ask this exact next question: Sure, I can add this referral. What is the lead name?',
-    ]
-      .filter(Boolean)
-      .join("\n"),
-  });
+  return [
+    "Sure, I can add this referral.",
+    `Mobile: ${leadMobileNumber}`,
+    remark ? `Remark: ${remark}` : "",
+    "",
+    askField("leadName"),
+  ]
+    .filter((line) => line !== "")
+    .join("\n");
 }
 
 export async function runWhatsappAgentTurn(input: {
@@ -744,90 +723,53 @@ export async function runWhatsappAgentTurn(input: {
   const message = input.text.trim();
 
   if (!message) {
-    return "I received your message, but I could not read text from it yet. Please send a text message.";
+    return "I received your message, but I couldn't read any text in it. Please send a text message.";
   }
 
-  if (input.state.mode.startsWith("selecting_update") || input.state.mode.startsWith("collecting_update") || input.state.mode === "confirming_update" || wantsUpdateLead(message)) {
+  // Continue an in-progress update flow, or start one on request.
+  if (
+    input.state.mode.startsWith("selecting_update") ||
+    input.state.mode.startsWith("collecting_update") ||
+    input.state.mode === "confirming_update" ||
+    (input.state.mode === "idle" && wantsUpdateLead(message))
+  ) {
     return runLeadUpdate(input.senderPhone, referrer, input.state, message);
   }
 
+  // Phone-first quick add ("call 0123456789 mr tan").
   if (input.state.mode === "idle" && wantsPhoneFirstLead(message)) {
     return startPhoneFirstLeadCollection(input.senderPhone, referrer, message);
   }
 
+  // Continue an in-progress lead collection, or start one on request.
   if (input.state.mode !== "idle" || wantsAddLead(message)) {
     return runLeadCollection(input.senderPhone, referrer, input.state, message);
   }
 
-  const referrals = await listWhatsappReferrals(referrer.customerId);
-  let intent = null;
-
-  try {
-    intent = await classifyWhatsappIntent({ referrer, referrals, message });
-  } catch {
-    intent = null;
-  }
-
-  const selectedIntent =
-    intent?.intent ||
-    (wantsLeadList(message)
-      ? "list_leads"
-      : wantsLeadDetail(message)
-        ? "lead_details"
-        : wantsHelp(message)
-          ? "help"
-          : wantsUpdateLead(message)
-            ? "update_lead"
-            : "unknown");
-
+  // From here on the state is idle. Route by keyword only.
+  const isAdmin = isWhatsappSuperAdminPhone(input.senderPhone);
   const requestedReferrerPhone = extractPhoneFromMessage(message);
 
-  if (isWhatsappSuperAdminPhone(input.senderPhone) && requestedReferrerPhone && normalizeText(message).includes("lead")) {
-    const toolResult = await buildAdminLeadListByReferrerPhoneReply(input.senderPhone, requestedReferrerPhone);
-    return polishWhatsappReply({ referrer, userMessage: message, toolResult });
+  if (isAdmin && requestedReferrerPhone && normalizeText(message).includes("lead")) {
+    return buildAdminLeadListByReferrerPhoneReply(input.senderPhone, requestedReferrerPhone);
   }
 
-  if (isWhatsappSuperAdminPhone(input.senderPhone) && wantsAdminLeadList(message) && selectedIntent !== "lead_details") {
-    const toolResult = await buildAdminLeadListReply(input.senderPhone);
-    return polishWhatsappReply({ referrer, userMessage: message, toolResult });
+  if (isAdmin && wantsAdminLeadList(message) && !wantsLeadDetail(message)) {
+    return buildAdminLeadListReply(input.senderPhone);
   }
 
-  if (selectedIntent === "add_lead") {
-    return runLeadCollection(input.senderPhone, referrer, input.state, message);
+  if (wantsLeadDetail(message)) {
+    return buildLeadDetailReply(referrer, message);
   }
 
-  if (selectedIntent === "update_lead") {
-    return runLeadUpdate(input.senderPhone, referrer, input.state, message);
+  if (wantsLeadList(message)) {
+    return buildLeadListReply(referrer, input.senderPhone);
   }
 
-  if (selectedIntent === "list_leads") {
-    const toolResult = await buildLeadListReply(referrer, input.senderPhone);
-    return polishWhatsappReply({ referrer, userMessage: message, toolResult });
+  if (wantsHelp(message)) {
+    return MENU;
   }
 
-  if (selectedIntent === "lead_details") {
-    const toolResult = await buildLeadDetailReply(referrer, message);
-    return polishWhatsappReply({ referrer, userMessage: message, toolResult });
-  }
-
-  if (selectedIntent === "help") {
-    return polishWhatsappReply({
-      referrer,
-      userMessage: message,
-      toolResult: [
-        "Tool result: Help menu requested.",
-        'User-facing reply: I am the Referral Assistant. I can help with referral leads only.',
-        'User-facing action: Send a phone number or reply "add lead" to add a referral.',
-        'User-facing action: Reply "my leads" to check leads.',
-        'User-facing action: Reply "show lead 1" to view one lead.',
-        'User-facing action: Reply "update lead 1" to edit a lead.',
-      ].join("\n"),
-    });
-  }
-
-  return polishWhatsappReply({
-    referrer,
-    userMessage: message,
-    toolResult: 'Tool result: Unsupported message. Role: Referral Assistant. Explain that the assistant only helps with referral leads: add leads, record leads in the database through the system flow, check leads, show lead details, and update lead information. Do not talk about other topics. Suggested actions: "add lead", "my leads", "show lead 1", or "update lead 1".',
-  });
+  // Anything unrecognized: show the menu so the user always knows what to do.
+  return MENU;
 }

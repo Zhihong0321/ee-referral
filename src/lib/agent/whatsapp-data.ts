@@ -43,21 +43,6 @@ export const EMPTY_WHATSAPP_AGENT_STATE: WhatsappAgentState = {
   nextField: null,
 };
 
-export type WhatsappInboundRow = {
-  id: string;
-  session_identifier: string;
-  external_message_id: string;
-  sender_jid: string;
-  sender_phone: string | null;
-  recipient_phone: string | null;
-  message_type: string | null;
-  raw_payload: Record<string, unknown>;
-  media_url: string | null;
-  process_status: string;
-  process_attempts: number;
-  created_at: string;
-};
-
 export type WhatsappReferrerAccount = {
   customerId: string;
   name: string;
@@ -175,68 +160,6 @@ export function isWhatsappSuperAdminPhone(phone: string) {
   const canonical = toCanonicalMalaysiaPhone(phone);
 
   return configured.includes(canonical);
-}
-
-export function extractTextFromPayload(rawPayload: Record<string, unknown>) {
-  const message = rawPayload.message as Record<string, unknown> | undefined;
-  const conversation = message?.conversation;
-  const extendedText = (message?.extendedTextMessage as Record<string, unknown> | undefined)?.text;
-
-  if (typeof conversation === "string" && conversation.trim()) {
-    return conversation.trim();
-  }
-
-  if (typeof extendedText === "string" && extendedText.trim()) {
-    return extendedText.trim();
-  }
-
-  return "";
-}
-
-export async function listPendingWhatsappInbound(limit: number, afterId = 0, includeFailed = false) {
-  const config = getAgentConfig();
-
-  return runWhatsappAgentSql<WhatsappInboundRow>(
-    `
-      SELECT
-        id::text,
-        session_identifier,
-        external_message_id,
-        sender_jid,
-        sender_phone,
-        recipient_phone,
-        message_type,
-        raw_payload,
-        media_url,
-        process_status,
-        process_attempts,
-        created_at::text
-      FROM wa_inbound_inbox
-      WHERE session_identifier = $1
-        AND (
-          process_status = 'pending'
-          OR ($4::boolean = true AND process_status = 'failed')
-        )
-        AND id > $3::bigint
-      ORDER BY created_at ASC, id ASC
-      LIMIT $2
-    `,
-    [config.sessionId, limit, afterId, includeFailed],
-  );
-}
-
-export async function getLatestWhatsappInboundId() {
-  const config = getAgentConfig();
-  const rows = await runWhatsappAgentSql<{ max_id: string | number }>(
-    `
-      SELECT COALESCE(MAX(id), 0) AS max_id
-      FROM wa_inbound_inbox
-      WHERE session_identifier = $1
-    `,
-    [config.sessionId],
-  );
-
-  return Number(rows[0]?.max_id || 0);
 }
 
 export async function ensureChannelSession() {
@@ -729,39 +652,6 @@ export async function updateWhatsappReferral(
     referralId: update.referralId,
     leadName: update.field === "leadName" ? update.value : existing.lead_name,
   };
-}
-
-export async function markInboundProcessed(id: string, reply: string) {
-  await runWhatsappAgentSql(
-    `
-      UPDATE wa_inbound_inbox
-      SET process_status = 'processed',
-          processed_at = NOW(),
-          locked_at = NULL,
-          last_error = NULL,
-          updated_at = NOW()
-      WHERE id = $1::bigint
-    `,
-    [id],
-  );
-
-  return reply;
-}
-
-export async function markInboundFailed(id: string, error: string) {
-  await runWhatsappAgentSql(
-    `
-      UPDATE wa_inbound_inbox
-      SET process_status = 'failed',
-          process_attempts = process_attempts + 1,
-          last_error = $2,
-          last_error_at = NOW(),
-          locked_at = NULL,
-          updated_at = NOW()
-      WHERE id = $1::bigint
-    `,
-    [id, error.slice(0, 1000)],
-  );
 }
 
 export async function insertEtMessage(input: {

@@ -2,19 +2,15 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import {
-  getLatestWhatsappInboundId,
   isWhatsappAgentRequestAuthorized,
-  processPendingWhatsappInbound,
   processWhatsappAgentMessages,
 } from "@/lib/agent/whatsapp-processor";
 
 export const runtime = "nodejs";
 
+// Manual/testing entry point. Real inbound traffic arrives via the webhook route.
 const requestSchema = z.object({
-  limit: z.coerce.number().int().positive().max(20).default(5),
-  afterId: z.coerce.number().int().min(0).default(0),
   dryRun: z.boolean().optional().default(false),
-  includeFailed: z.boolean().optional().default(false),
   messages: z
     .array(
       z.object({
@@ -26,7 +22,7 @@ const requestSchema = z.object({
         rawPayload: z.record(z.string(), z.unknown()).optional().default({}),
       }),
     )
-    .optional(),
+    .min(1),
 });
 
 function isAuthorized(request: Request) {
@@ -39,35 +35,10 @@ export async function POST(request: Request) {
   }
 
   const body = requestSchema.parse(await request.json().catch(() => ({})));
-
-  if (body.messages?.length) {
-    const results = await processWhatsappAgentMessages(body.messages, { dryRun: body.dryRun });
-
-    return NextResponse.json({
-      processed: results.length,
-      results,
-    });
-  }
-
-  const results = await processPendingWhatsappInbound({
-    limit: body.limit,
-    afterId: body.afterId,
-    includeFailed: body.includeFailed,
-    dryRun: body.dryRun,
-  });
+  const results = await processWhatsappAgentMessages(body.messages, { dryRun: body.dryRun });
 
   return NextResponse.json({
     processed: results.length,
     results,
-  });
-}
-
-export async function GET(request: Request) {
-  if (!isAuthorized(request)) {
-    return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
-  }
-
-  return NextResponse.json({
-    latestInboundId: await getLatestWhatsappInboundId(),
   });
 }

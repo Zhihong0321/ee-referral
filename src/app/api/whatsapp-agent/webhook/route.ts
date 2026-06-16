@@ -96,7 +96,22 @@ function extractGenericText(message: JsonRecord) {
   return stringFrom(extendedText.text);
 }
 
+function isFromMe(message: JsonRecord) {
+  if (message.fromMe === true) return true;
+
+  const key = asRecord(message.key);
+  if (key.fromMe === true) return true;
+
+  const direction = stringFrom(message.direction).toLowerCase();
+  return direction === "outbound" || direction === "out";
+}
+
 function normalizeGenericMessage(message: JsonRecord, fallbackRecipientPhone = ""): WhatsappAgentMessageInput | null {
+  // Never react to our own outbound messages — that would create a reply loop.
+  if (isFromMe(message)) {
+    return null;
+  }
+
   const text = extractGenericText(message);
   const senderPhone = pickString(message, ["senderPhone", "from", "phone", "phoneNumber", "sender", "sender_phone"]);
   const externalMessageId =
