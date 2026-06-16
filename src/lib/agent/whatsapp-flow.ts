@@ -55,12 +55,42 @@ function isConfirm(value: string) {
 
 function wantsAddLead(message: string) {
   const text = normalizeText(message);
-  return text.includes("new lead") || text.includes("add lead") || text.includes("create lead") || text.includes("refer someone");
+  return (
+    text.includes("new lead") ||
+    text.includes("add lead") ||
+    text.includes("create lead") ||
+    text.includes("refer someone") ||
+    text.includes("lead baru") ||
+    text.includes("tambah lead") ||
+    text.includes("tambah referral") ||
+    text.includes("新增") ||
+    text.includes("添加") ||
+    text.includes("推荐")
+  );
 }
 
 function wantsLeadList(message: string) {
   const text = normalizeText(message);
-  return text.includes("my leads") || text.includes("my referrals") || text.includes("show all leads") || text === "leads" || text.includes("manage lead");
+  return (
+    text.includes("my leads") ||
+    text.includes("my referrals") ||
+    text.includes("show all leads") ||
+    text === "leads" ||
+    text.includes("manage lead") ||
+    text.includes("how many lead") ||
+    text.includes("how many referral") ||
+    (text.includes("only") && text.includes("lead")) ||
+    (text.includes("got") && text.includes("lead")) ||
+    text.includes("lead saya") ||
+    text.includes("referral saya") ||
+    text.includes("senarai lead") ||
+    text.includes("berapa lead") ||
+    text.includes("我的lead") ||
+    text.includes("我的 lead") ||
+    text.includes("我的推荐") ||
+    text.includes("有几个lead") ||
+    text.includes("几个lead")
+  );
 }
 
 function wantsAdminLeadList(message: string) {
@@ -84,19 +114,74 @@ function extractPhoneFromMessage(message: string) {
   return candidate || "";
 }
 
+function removePhoneFromMessage(message: string) {
+  return message
+    .replace(/(?:\+?6?0?1[0-9][\s-]?[0-9\s-]{6,}|60[0-9]{8,}|0[0-9]{8,})/g, "")
+    .replace(/^[\s,.:;-]+|[\s,.:;-]+$/g, "")
+    .trim();
+}
+
+function wantsPhoneFirstLead(message: string) {
+  const text = normalizeText(message);
+  const phone = extractPhoneFromMessage(message);
+  const wordsWithoutPhone = removePhoneFromMessage(text);
+
+  if (!phone) return false;
+  if (!wordsWithoutPhone) return true;
+
+  return (
+    text.includes("call") ||
+    text.includes("contact") ||
+    text.includes("follow up") ||
+    text.includes("him") ||
+    text.includes("her") ||
+    text.includes("customer") ||
+    text.includes("client") ||
+    text.includes("lead") ||
+    text.includes("referral") ||
+    text.includes("hubungi") ||
+    text.includes("telefon") ||
+    text.includes("联系") ||
+    text.includes("打给")
+  );
+}
+
 function wantsLeadDetail(message: string) {
   const text = normalizeText(message);
-  return text.includes("show lead") || text.includes("lead detail") || text.includes("status of") || text.includes("open lead");
+  return (
+    text.includes("show lead") ||
+    text.includes("lead detail") ||
+    text.includes("status of") ||
+    text.includes("open lead") ||
+    text.includes("lihat lead") ||
+    text.includes("status lead") ||
+    text.includes("查看lead") ||
+    text.includes("查看 lead") ||
+    text.includes("lead详情") ||
+    text.includes("lead 详情")
+  );
 }
 
 function wantsUpdateLead(message: string) {
   const text = normalizeText(message);
-  return text.includes("update lead") || text.includes("edit lead") || text.includes("change lead") || text.includes("change the") || text.includes("update the");
+  return (
+    text.includes("update lead") ||
+    text.includes("edit lead") ||
+    text.includes("change lead") ||
+    text.includes("change the") ||
+    text.includes("update the") ||
+    text.includes("kemas kini lead") ||
+    text.includes("ubah lead") ||
+    text.includes("更新lead") ||
+    text.includes("更新 lead") ||
+    text.includes("修改lead") ||
+    text.includes("修改 lead")
+  );
 }
 
 function wantsHelp(message: string) {
   const text = normalizeText(message);
-  return text === "hi" || text === "hello" || text === "help" || text === "menu" || text === "start";
+  return text === "hi" || text === "hello" || text === "help" || text === "menu" || text === "start" || text === "你好" || text === "hai" || text === "halo";
 }
 
 function getNextField(draft: Partial<WhatsappLeadDraft>) {
@@ -600,6 +685,34 @@ async function runLeadCollection(senderPhone: string, referrer: WhatsappReferrer
   });
 }
 
+async function startPhoneFirstLeadCollection(senderPhone: string, referrer: WhatsappReferrerAccount, message: string) {
+  const leadMobileNumber = toCanonicalMalaysiaPhone(extractPhoneFromMessage(message));
+  const remark = removePhoneFromMessage(message);
+  const draft: Partial<WhatsappLeadDraft> = {
+    leadMobileNumber,
+    remark,
+  };
+
+  await saveAgentState(senderPhone, {
+    mode: "collecting_lead",
+    draft,
+    nextField: "leadName",
+  });
+
+  return polishWhatsappReply({
+    referrer,
+    userMessage: message,
+    toolResult: [
+      "Tool result: Started a new referral lead collection from a phone number.",
+      `Saved lead mobile number: ${leadMobileNumber}`,
+      remark ? `Saved remark: ${remark}` : "",
+      'Ask this exact next question: Sure, I can add this referral. What is the lead name?',
+    ]
+      .filter(Boolean)
+      .join("\n"),
+  });
+}
+
 export async function runWhatsappAgentTurn(input: {
   senderPhone: string;
   text: string;
@@ -614,6 +727,10 @@ export async function runWhatsappAgentTurn(input: {
 
   if (input.state.mode.startsWith("selecting_update") || input.state.mode.startsWith("collecting_update") || input.state.mode === "confirming_update" || wantsUpdateLead(message)) {
     return runLeadUpdate(input.senderPhone, referrer, input.state, message);
+  }
+
+  if (input.state.mode === "idle" && wantsPhoneFirstLead(message)) {
+    return startPhoneFirstLeadCollection(input.senderPhone, referrer, message);
   }
 
   if (input.state.mode !== "idle" || wantsAddLead(message)) {
@@ -676,7 +793,10 @@ export async function runWhatsappAgentTurn(input: {
       referrer,
       userMessage: message,
       toolResult: [
-        "Tool result: Show menu.",
+        "Tool result: Show Referral Assistant menu.",
+        "Role: Referral Assistant.",
+        "Scope: help referrers add leads, record leads in the database through the system flow, check their leads, show lead details, and update lead information.",
+        "Boundary: do not talk about other topics.",
         "Available actions:",
         '- Reply "add lead" to create a referral.',
         '- Reply "my leads" to see referral leads.',
@@ -689,6 +809,6 @@ export async function runWhatsappAgentTurn(input: {
   return polishWhatsappReply({
     referrer,
     userMessage: message,
-    toolResult: 'Tool result: Unsupported message. Explain that the assistant can help with referral leads. Suggested actions: "add lead", "my leads", "show lead 1", or "update lead 1".',
+    toolResult: 'Tool result: Unsupported message. Role: Referral Assistant. Explain that the assistant only helps with referral leads: add leads, record leads in the database through the system flow, check leads, show lead details, and update lead information. Do not talk about other topics. Suggested actions: "add lead", "my leads", "show lead 1", or "update lead 1".',
   });
 }
