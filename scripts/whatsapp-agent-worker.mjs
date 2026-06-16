@@ -9,6 +9,10 @@ const baileysBaseUrl = (process.env.WHATSAPP_AGENT_BAILEYS_BASE_URL || "https://
 const baileysSessionId = process.env.WHATSAPP_AGENT_BAILEYS_SESSION_ID || "0182920127";
 const baileysPollEnabled = process.env.WHATSAPP_AGENT_BAILEYS_POLL !== "false";
 const baileysInitialLookbackMs = Number(process.env.WHATSAPP_AGENT_BAILEYS_INITIAL_LOOKBACK_MS || 24 * 60 * 60 * 1000);
+const watchedPhones = (process.env.WHATSAPP_AGENT_WATCH_PHONES || process.env.WHATSAPP_AGENT_SUPER_ADMIN_PHONES || "601121000099")
+  .split(",")
+  .map((value) => value.replace(/\D/g, ""))
+  .filter(Boolean);
 const statePath =
   process.env.WHATSAPP_AGENT_WORKER_STATE ||
   path.join(os.tmpdir(), "ee-referral-whatsapp-agent-worker-state.json");
@@ -90,13 +94,20 @@ async function pollBaileys(state) {
   const seen = new Set(state.baileysSeenIds || []);
   const messagesToProcess = [];
   let watermark = Number(state.baileysWatermark || 0);
-  const chats = (chatsPayload.chats || [])
+  const chatIds = new Set(
+    (chatsPayload.chats || [])
     .filter((chat) => !chat.isGroup && chat.id && Number(chat.lastMessageTimestamp || 0) >= watermark)
-    .slice(0, 30);
+    .slice(0, 30)
+    .map((chat) => chat.id),
+  );
 
-  for (const chat of chats) {
+  for (const phone of watchedPhones) {
+    chatIds.add(`${phone}@s.whatsapp.net`);
+  }
+
+  for (const chatId of chatIds) {
     const response = await fetch(
-      `${baileysBaseUrl}/chats/${encodeURIComponent(chat.id)}/messages?sessionId=${encodeURIComponent(baileysSessionId)}&limit=10`,
+      `${baileysBaseUrl}/chats/${encodeURIComponent(chatId)}/messages?sessionId=${encodeURIComponent(baileysSessionId)}&limit=10`,
     );
     const payload = await response.json().catch(() => ({}));
 
@@ -104,7 +115,7 @@ async function pollBaileys(state) {
 
     for (const message of payload.messages || []) {
       const timestamp = Number(message.timestamp || 0);
-      const phone = message.phoneNumber || String(chat.id).split("@")[0];
+      const phone = message.phoneNumber || String(chatId).split("@")[0];
       const content = typeof message.content === "string" ? message.content.trim() : "";
 
       if (message.fromMe || !content || !phone || seen.has(message.id) || timestamp < watermark) {
@@ -175,7 +186,7 @@ async function tick() {
   }
 }
 
-console.log(JSON.stringify({ at: new Date().toISOString(), status: "started", processUrl, intervalMs, statePath, afterId: readAfterId(), baileysPollEnabled, baileysBaseUrl, baileysSessionId }));
+console.log(JSON.stringify({ at: new Date().toISOString(), status: "started", processUrl, intervalMs, statePath, afterId: readAfterId(), baileysPollEnabled, baileysBaseUrl, baileysSessionId, watchedPhones }));
 
 while (true) {
   try {

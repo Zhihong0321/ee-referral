@@ -61,6 +61,10 @@ export async function GET() {
       sessionId,
       tenantId: config.tenantId,
       workerPollEnabled: process.env.WHATSAPP_AGENT_BAILEYS_POLL !== "false",
+      watchedPhones: (process.env.WHATSAPP_AGENT_WATCH_PHONES || process.env.WHATSAPP_AGENT_SUPER_ADMIN_PHONES || "601121000099")
+        .split(",")
+        .map((value) => value.replace(/\D/g, ""))
+        .filter(Boolean),
     })),
     check("baileysSessions", async () => fetchJson(`${baileysBaseUrl}/sessions`)),
     check("baileysChats", async () => {
