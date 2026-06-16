@@ -49,6 +49,19 @@ function isCancel(value: string) {
   return ["cancel", "stop", "abort"].includes(normalizeText(value));
 }
 
+function isResetOrFrustration(value: string) {
+  const text = normalizeText(value);
+
+  return (
+    ["reset", "restart", "start over", "clear", "oi", "oii", "oiii", "oiiii", "hello", "hey", "hai", "hi"].includes(text) ||
+    text.includes("you there") ||
+    text.includes("fuck") ||
+    text.includes("stupid") ||
+    text.includes("dead") ||
+    text.includes("not working")
+  );
+}
+
 function isConfirm(value: string) {
   return ["confirm", "yes", "save", "ok", "okay"].includes(normalizeText(value));
 }
@@ -594,6 +607,15 @@ async function runLeadCollection(senderPhone: string, referrer: WhatsappReferrer
       referrer,
       userMessage: message,
       toolResult: 'Tool result: Lead creation cancelled. Next action: user can reply "add lead" to start again.',
+    });
+  }
+
+  if (state.mode !== "idle" && isResetOrFrustration(message)) {
+    await saveAgentState(senderPhone, EMPTY_WHATSAPP_AGENT_STATE);
+    return polishWhatsappReply({
+      referrer,
+      userMessage: message,
+      toolResult: 'Tool result: Lead draft cleared because the user is not continuing the lead form. Role: Referral Assistant. Explain that the assistant is ready again and only helps with referral leads. Suggested actions: "add lead", "my leads", "show lead 1", or send a lead phone number.',
     });
   }
 
