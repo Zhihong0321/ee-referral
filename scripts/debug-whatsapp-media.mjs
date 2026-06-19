@@ -259,8 +259,10 @@ async function pendingMessages() {
         AND inbound.direction = 'inbound'
         AND inbound.sender_phone IS NOT NULL
         AND BTRIM(inbound.sender_phone) <> ''
+        AND (inbound.recipient_phone IS NULL OR inbound.sender_phone <> inbound.recipient_phone)
         AND inbound.external_message_id IS NOT NULL
         AND BTRIM(inbound.external_message_id) <> ''
+        AND inbound.message_type IN ('text', 'conversation', 'extendedTextMessage', 'audio', 'ptt', 'image', 'video', 'document', 'sticker', 'contact', 'contacts', 'contactMessage', 'contactsArrayMessage')
         AND inbound.created_at >= NOW() - ($2::int * INTERVAL '1 minute')
         AND NOT EXISTS (
           SELECT 1
