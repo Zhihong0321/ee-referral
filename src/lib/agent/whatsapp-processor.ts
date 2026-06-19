@@ -284,8 +284,13 @@ async function describeWhatsappVisual(mediaUrl: string, messageType: "image" | "
             {
               text: [
                 `Convert this WhatsApp ${messageType} into plain text for a referral assistant.`,
-                "Extract any visible lead phone number, name, area, preferred agent, or referral instruction.",
-                "Return only referral-relevant details.",
+                "Look specifically for referral contact details in name cards, business cards, handwritten notes, forms, screenshots, posters, chat screenshots, and cropped photos.",
+                "OCR all visible text that may be a person name, company name, phone/mobile/WhatsApp number, location/area, address, or instruction such as call/contact/pass to/assign/PIC/preferred agent.",
+                "Phone extraction is highest priority. Preserve country codes and leading zeroes. If multiple phone numbers are visible, list all of them and label the most likely lead phone if clear.",
+                "Name extraction is second priority. Include names from handwritten text, name-card titles, contact screenshots, and labels near phone numbers. Keep Chinese, Malay, and English names exactly as visible.",
+                "Area/location extraction is third priority. Include township, city, state, project/site area, or address if visible.",
+                "Preferred-agent extraction is fourth priority. Only include it if the image/caption clearly indicates an agent/PIC/handler.",
+                "Return only referral-relevant details in plain text using this format when possible: Lead name: ... | Lead phone: ... | Area: ... | Preferred agent: ... | Notes: ...",
                 "If no referral lead details are visible, return exactly: No referral lead details visible.",
                 caption ? `Caption: ${caption}` : "",
               ]
