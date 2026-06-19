@@ -85,9 +85,35 @@ Railway environment variables to set:
 - `APP_BASE_URL`
 - `AUTH_HUB_URL`
 
-## WhatsApp Agent Webhook
+## WhatsApp Agent Inbound Processing
 
-Inbound WhatsApp messages can trigger the referral AI agent through:
+Baileys promotes inbound WhatsApp messages into `et_messages`. The production worker calls:
+
+```text
+POST /api/whatsapp-agent/process
+```
+
+with:
+
+```json
+{
+  "source": "database",
+  "limit": 10,
+  "lookbackMinutes": 60
+}
+```
+
+The processor reads unreplied inbound rows from `et_messages`, including `message_type`, `text_content`, `media_url`, and `raw_payload`.
+
+Media handling:
+
+- `contact` / `contacts`: parsed from `raw_payload.message.contactMessage` or `contactsArrayMessage`, then sent to the agent as lead name/phone details.
+- `image`: `media_url` is resolved and sent to MiniMax M3 as an image block for visual extraction.
+- `video`: `media_url` is resolved and sent to MiniMax M3 as a video block for visual extraction.
+- `audio` / voice note: `media_url` is downloaded and sent to ASR first, then the transcript is sent to the agent.
+- `document` / `sticker`: caption, filename, and media URL are preserved; the agent asks for missing text details when the content is not extractable.
+
+Webhook/testing payloads are still supported through:
 
 ```text
 POST /api/whatsapp-agent/webhook
@@ -101,7 +127,8 @@ The route accepts Meta WhatsApp Cloud API webhook payloads, Baileys-style `messa
   "senderPhone": "60123456789",
   "recipientPhone": "60182920127",
   "messageType": "text",
-  "text": "add lead"
+  "text": "add lead",
+  "mediaUrl": ""
 }
 ```
 
@@ -109,7 +136,19 @@ For Meta webhook verification, set `WHATSAPP_AGENT_WEBHOOK_VERIFY_TOKEN`; the ro
 
 Every webhook request is logged as structured JSON in the app server logs with event names like `whatsapp_agent_webhook_post_received`, `whatsapp_agent_webhook_post_ignored`, and `whatsapp_agent_webhook_post_processed`.
 
-The existing internal processor remains available at `POST /api/whatsapp-agent/process` for polling `wa_inbound_inbox` or manually sending a normalized `messages` array.
+If a message is missing from `et_messages`, check `/api/whatsapp-agent/diagnostics` for recent `wa_inbound_inbox` rows with `process_status != 'processed'` and inspect `last_error`.
+
+Local debug helper:
+
+```bash
+npm run whatsapp:debug-media -- summary
+npm run whatsapp:debug-media -- pending --limit 20 --lookback 1440
+npm run whatsapp:debug-media -- contacts --limit 20
+npm run whatsapp:debug-media -- probe-url --id <et_messages_id_or_external_message_id>
+npm run whatsapp:debug-media -- asr --id <et_messages_id_or_external_message_id>
+```
+
+The helper loads `.env.local` / `.env`, reads through the SQL proxy or `DATABASE_URL`, and does not send WhatsApp replies. `asr` is the only command that calls the ASR endpoint, and only for the selected message or URL.
 
 ## Auth flow used
 

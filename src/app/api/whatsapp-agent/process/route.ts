@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import {
   isWhatsappAgentRequestAuthorized,
+  processPendingWhatsappAgentMessages,
   processWhatsappAgentMessages,
 } from "@/lib/agent/whatsapp-processor";
 
@@ -11,6 +12,9 @@ export const runtime = "nodejs";
 // Manual/testing entry point. Real inbound traffic arrives via the webhook route.
 const requestSchema = z.object({
   dryRun: z.boolean().optional().default(false),
+  source: z.enum(["request", "database"]).optional().default("request"),
+  limit: z.number().int().min(1).max(50).optional().default(10),
+  lookbackMinutes: z.number().int().min(1).max(10080).optional().default(60),
   messages: z
     .array(
       z.object({
@@ -18,11 +22,13 @@ const requestSchema = z.object({
         senderPhone: z.string().min(1),
         recipientPhone: z.string().optional().nullable(),
         messageType: z.string().optional().default("text"),
-        text: z.string().min(1),
+        text: z.string().optional().default(""),
+        mediaUrl: z.string().optional().nullable(),
         rawPayload: z.record(z.string(), z.unknown()).optional().default({}),
       }),
     )
-    .min(1),
+    .optional()
+    .default([]),
 });
 
 function isAuthorized(request: Request) {
@@ -35,10 +41,18 @@ export async function POST(request: Request) {
   }
 
   const body = requestSchema.parse(await request.json().catch(() => ({})));
-  const results = await processWhatsappAgentMessages(body.messages, { dryRun: body.dryRun });
+  const results =
+    body.source === "database"
+      ? await processPendingWhatsappAgentMessages({
+          dryRun: body.dryRun,
+          limit: body.limit,
+          lookbackMinutes: body.lookbackMinutes,
+        })
+      : await processWhatsappAgentMessages(body.messages, { dryRun: body.dryRun });
 
   return NextResponse.json({
     processed: results.length,
+    source: body.source,
     results,
   });
 }

@@ -93,7 +93,50 @@ function extractGenericText(message: JsonRecord) {
   if (conversation) return conversation;
 
   const extendedText = getNestedRecord(messageObject, ["extendedTextMessage"]);
-  return stringFrom(extendedText.text);
+  const extendedTextValue = stringFrom(extendedText.text);
+  if (extendedTextValue) return extendedTextValue;
+
+  for (const key of ["imageMessage", "videoMessage", "documentMessage", "audioMessage", "stickerMessage", "contactMessage"]) {
+    const nestedMessage = asRecord(messageObject[key]);
+    const caption = pickString(nestedMessage, ["caption", "fileName", "displayName"]);
+    if (caption) return caption;
+  }
+
+  return "";
+}
+
+function extractMediaUrl(message: JsonRecord) {
+  const direct = pickString(message, ["mediaUrl", "media_url", "url", "path"]);
+  if (direct) return direct;
+
+  const messageObject = asRecord(message.message);
+  for (const key of ["imageMessage", "videoMessage", "documentMessage", "audioMessage", "stickerMessage"]) {
+    const nestedMessage = asRecord(messageObject[key]);
+    const mediaUrl = pickString(nestedMessage, ["mediaUrl", "media_url", "url", "directPath"]);
+    if (mediaUrl) return mediaUrl;
+  }
+
+  return "";
+}
+
+function inferGenericMessageType(message: JsonRecord) {
+  const direct = pickString(message, ["messageType", "type", "message_type"]);
+  if (direct) return direct;
+
+  const messageObject = asRecord(message.message);
+  const typeMap: Array<[string, string]> = [
+    ["imageMessage", "image"],
+    ["videoMessage", "video"],
+    ["documentMessage", "document"],
+    ["audioMessage", "audio"],
+    ["stickerMessage", "sticker"],
+    ["contactMessage", "contact"],
+    ["contactsArrayMessage", "contacts"],
+    ["extendedTextMessage", "text"],
+  ];
+  const found = typeMap.find(([key]) => Object.keys(asRecord(messageObject[key])).length > 0);
+
+  return found?.[1] || "text";
 }
 
 function isFromMe(message: JsonRecord) {
@@ -113,6 +156,8 @@ function normalizeGenericMessage(message: JsonRecord, fallbackRecipientPhone = "
   }
 
   const text = extractGenericText(message);
+  const messageType = inferGenericMessageType(message);
+  const mediaUrl = extractMediaUrl(message);
   const key = asRecord(message.key);
   const senderPhone =
     pickString(message, ["senderPhone", "from", "phone", "phoneNumber", "sender", "sender_phone", "remoteJid", "chatId", "jid"]) ||
@@ -122,7 +167,7 @@ function normalizeGenericMessage(message: JsonRecord, fallbackRecipientPhone = "
     pickString(key, ["id"]) ||
     `${senderPhone || "unknown"}_${Date.now()}`;
 
-  if (!text || !senderPhone) {
+  if (!senderPhone || (!text && messageType === "text" && !mediaUrl)) {
     return null;
   }
 
@@ -130,8 +175,9 @@ function normalizeGenericMessage(message: JsonRecord, fallbackRecipientPhone = "
     externalMessageId,
     senderPhone,
     recipientPhone: pickString(message, ["recipientPhone", "to", "recipient", "recipient_phone"]) || fallbackRecipientPhone,
-    messageType: pickString(message, ["messageType", "type", "message_type"]) || "text",
+    messageType,
     text,
+    mediaUrl,
     rawPayload: message,
   };
 }
@@ -144,14 +190,19 @@ function normalizeMetaMessage(message: JsonRecord, value: JsonRecord): WhatsappA
   const buttonReply = getNestedRecord(interactive, ["button_reply"]);
   const text =
     stringFrom(textObject.body) ||
+    stringFrom(asRecord(message.image).caption) ||
+    stringFrom(asRecord(message.video).caption) ||
+    stringFrom(asRecord(message.document).caption) ||
+    stringFrom(asRecord(message.document).filename) ||
     stringFrom(listReply.title) ||
     stringFrom(listReply.id) ||
     stringFrom(buttonReply.title) ||
     stringFrom(buttonReply.id) ||
     stringFrom(button.text);
   const senderPhone = stringFrom(message.from);
+  const messageType = stringFrom(message.type) || "text";
 
-  if (!text || !senderPhone) {
+  if (!senderPhone || (!text && messageType === "text")) {
     return null;
   }
 
@@ -161,7 +212,7 @@ function normalizeMetaMessage(message: JsonRecord, value: JsonRecord): WhatsappA
     externalMessageId: stringFrom(message.id) || `${senderPhone}_${Date.now()}`,
     senderPhone,
     recipientPhone: stringFrom(metadata.display_phone_number) || stringFrom(metadata.phone_number_id),
-    messageType: stringFrom(message.type) || "text",
+    messageType,
     text,
     rawPayload: { source: "meta_whatsapp_webhook", value, message },
   };
@@ -287,6 +338,7 @@ export async function POST(request: Request) {
       recipientPhone: message.recipientPhone || "",
       messageType: message.messageType || "text",
       text: message.text,
+      mediaUrl: message.mediaUrl || "",
     })),
   });
 

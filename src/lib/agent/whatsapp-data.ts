@@ -823,6 +823,7 @@ export async function insertEtMessage(input: {
   direction: "inbound" | "outbound";
   messageType: string;
   textContent: string;
+  mediaUrl?: string | null;
   rawPayload: unknown;
   senderPhone: string | null;
   recipientPhone: string | null;
@@ -840,12 +841,13 @@ export async function insertEtMessage(input: {
         direction,
         message_type,
         text_content,
+        media_url,
         raw_payload,
         delivery_status,
         sender_phone,
         recipient_phone
       )
-      VALUES ($1, $2, 'whatsapp', $3, $4, $5, NULLIF($6, ''), $7::jsonb, $8, $9, $10)
+      VALUES ($1, $2, 'whatsapp', $3, $4, $5, NULLIF($6, ''), NULLIF($7, ''), $8::jsonb, $9, $10, $11)
       ON CONFLICT DO NOTHING
     `,
     [
@@ -855,12 +857,82 @@ export async function insertEtMessage(input: {
       input.direction,
       input.messageType,
       input.textContent,
+      input.mediaUrl || "",
       JSON.stringify(input.rawPayload || {}),
       input.direction === "outbound" ? "sent" : "received",
       input.senderPhone,
       input.recipientPhone,
     ],
   );
+}
+
+export type PendingWhatsappInboundMessage = {
+  id: string;
+  externalMessageId: string;
+  messageType: string;
+  textContent: string;
+  mediaUrl: string;
+  senderPhone: string;
+  recipientPhone: string;
+  rawPayload: Record<string, unknown>;
+  createdAt: string;
+};
+
+export async function listUnrepliedWhatsappInboundMessages(limit = 10, lookbackMinutes = 60) {
+  const rows = await runWhatsappAgentSql<{
+    id: string;
+    external_message_id: string | null;
+    message_type: string | null;
+    text_content: string | null;
+    media_url: string | null;
+    sender_phone: string | null;
+    recipient_phone: string | null;
+    raw_payload: Record<string, unknown> | null;
+    created_at: string | null;
+  }>(
+    `
+      SELECT
+        inbound.id::text,
+        inbound.external_message_id,
+        inbound.message_type,
+        inbound.text_content,
+        inbound.media_url,
+        inbound.sender_phone,
+        inbound.recipient_phone,
+        COALESCE(inbound.raw_payload, '{}'::jsonb) AS raw_payload,
+        inbound.created_at::text AS created_at
+      FROM et_messages inbound
+      WHERE inbound.channel = 'whatsapp'
+        AND inbound.direction = 'inbound'
+        AND inbound.sender_phone IS NOT NULL
+        AND BTRIM(inbound.sender_phone) <> ''
+        AND inbound.external_message_id IS NOT NULL
+        AND BTRIM(inbound.external_message_id) <> ''
+        AND inbound.created_at >= NOW() - ($2::int * INTERVAL '1 minute')
+        AND NOT EXISTS (
+          SELECT 1
+          FROM et_messages outbound
+          WHERE outbound.channel = 'whatsapp'
+            AND outbound.direction = 'outbound'
+            AND outbound.external_message_id = 'agent_reply_' || inbound.external_message_id
+        )
+      ORDER BY inbound.created_at ASC NULLS LAST, inbound.id ASC
+      LIMIT $1
+    `,
+    [Math.max(1, Math.min(limit, 50)), Math.max(1, lookbackMinutes)],
+  );
+
+  return rows.map((row) => ({
+    id: row.id,
+    externalMessageId: row.external_message_id || row.id,
+    messageType: row.message_type || "text",
+    textContent: row.text_content || "",
+    mediaUrl: row.media_url || "",
+    senderPhone: row.sender_phone || "",
+    recipientPhone: row.recipient_phone || "",
+    rawPayload: row.raw_payload || {},
+    createdAt: row.created_at || "",
+  }));
 }
 
 export async function hasEtMessage(externalMessageId: string, direction?: "inbound" | "outbound") {

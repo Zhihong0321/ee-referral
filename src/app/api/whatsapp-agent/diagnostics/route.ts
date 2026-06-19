@@ -49,7 +49,12 @@ export async function GET() {
       hasProxyAuth: Boolean(process.env.WHATSAPP_AGENT_PROXY_AUTH || process.env.SANDBOX_PROXY_AUTH),
       hasWebhookVerifyToken: Boolean(process.env.WHATSAPP_AGENT_WEBHOOK_VERIFY_TOKEN),
       hasLlmApiKey: Boolean(process.env.WHATSAPP_AGENT_LLM_API_KEY || process.env.MINIMAX_API_KEY),
-      llmModel: process.env.WHATSAPP_AGENT_LLM_MODEL || "MiniMax-M2",
+      llmModel: process.env.WHATSAPP_AGENT_LLM_MODEL || "MiniMax-M3",
+      hasAsrApiKey: Boolean(process.env.WHATSAPP_AGENT_ASR_API_KEY || process.env.WHATSAPP_AGENT_LLM_API_KEY || process.env.MINIMAX_API_KEY),
+      asrUrl:
+        process.env.WHATSAPP_AGENT_ASR_URL ||
+        `${(process.env.WHATSAPP_AGENT_ASR_BASE_URL || process.env.WHATSAPP_AGENT_LLM_BASE_URL || "https://api.minimax.io").replace(/\/$/, "")}/v1/audio/transcriptions`,
+      asrModel: process.env.WHATSAPP_AGENT_ASR_MODEL || "whisper-1",
       baileysBaseUrl,
       sessionId,
       tenantId: config.tenantId,
@@ -70,7 +75,7 @@ export async function GET() {
           SELECT table_name
           FROM information_schema.tables
           WHERE table_schema = 'public'
-            AND table_name IN ('et_messages', 'et_channel_sessions', 'customer', 'referral')
+            AND table_name IN ('et_messages', 'et_channel_sessions', 'wa_inbound_inbox', 'customer', 'referral')
           ORDER BY table_name
         `,
       ),
@@ -78,10 +83,40 @@ export async function GET() {
     check("dbRecentMessages", async () =>
       runWhatsappAgentSql(
         `
-          SELECT id::text, external_message_id, direction, sender_phone, recipient_phone, left(COALESCE(text_content, ''), 240) AS text_content, created_at::text
+          SELECT
+            id::text,
+            external_message_id,
+            direction,
+            message_type,
+            sender_phone,
+            recipient_phone,
+            left(COALESCE(text_content, ''), 240) AS text_content,
+            media_url,
+            created_at::text
           FROM et_messages
           WHERE channel = 'whatsapp'
           ORDER BY id DESC
+          LIMIT 20
+        `,
+      ),
+    ),
+    check("dbRecentInboundInbox", async () =>
+      runWhatsappAgentSql(
+        `
+          SELECT
+            id::text,
+            session_identifier,
+            external_message_id,
+            sender_phone,
+            recipient_phone,
+            message_type,
+            media_url,
+            process_status,
+            process_attempts,
+            last_error,
+            created_at::text
+          FROM wa_inbound_inbox
+          ORDER BY created_at DESC
           LIMIT 20
         `,
       ),

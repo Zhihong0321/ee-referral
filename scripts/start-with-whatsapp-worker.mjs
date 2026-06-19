@@ -1,6 +1,6 @@
-// Production entrypoint: run the Next server AND the Baileys polling worker
-// in the same container. The worker is what feeds inbound WhatsApp messages
-// into the Referral Assistant, so it MUST run alongside the server.
+// Production entrypoint: run the Next server AND the WhatsApp DB worker in the
+// same container. The worker feeds inbound et_messages rows into the Referral
+// Assistant, so it MUST run alongside the server.
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 

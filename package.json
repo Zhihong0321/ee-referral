@@ -8,6 +8,7 @@
     "start": "node scripts/start-with-whatsapp-worker.mjs",
     "lint": "eslint",
     "whatsapp:worker": "node scripts/whatsapp-agent-worker.mjs",
+    "whatsapp:debug-media": "node scripts/debug-whatsapp-media.mjs",
     "docker:build": "docker build -t ee-referral .",
     "docker:run": "docker run --rm -p 3000:3000 --env-file .env.local ee-referral"
   },
