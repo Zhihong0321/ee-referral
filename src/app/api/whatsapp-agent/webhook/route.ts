@@ -81,7 +81,7 @@ function getNestedRecord(source: JsonRecord, keys: string[]) {
 }
 
 function extractGenericText(message: JsonRecord) {
-  const direct = pickString(message, ["text", "body", "content", "message", "caption"]);
+  const direct = pickString(message, ["text", "body", "content", "contentPreview", "message", "caption"]);
   if (direct) return direct;
 
   const textObject = asRecord(message.text);
@@ -113,9 +113,13 @@ function normalizeGenericMessage(message: JsonRecord, fallbackRecipientPhone = "
   }
 
   const text = extractGenericText(message);
-  const senderPhone = pickString(message, ["senderPhone", "from", "phone", "phoneNumber", "sender", "sender_phone"]);
+  const key = asRecord(message.key);
+  const senderPhone =
+    pickString(message, ["senderPhone", "from", "phone", "phoneNumber", "sender", "sender_phone", "remoteJid", "chatId", "jid"]) ||
+    pickString(key, ["remoteJid", "participant"]);
   const externalMessageId =
     pickString(message, ["externalMessageId", "id", "messageId", "message_id"]) ||
+    pickString(key, ["id"]) ||
     `${senderPhone || "unknown"}_${Date.now()}`;
 
   if (!text || !senderPhone) {

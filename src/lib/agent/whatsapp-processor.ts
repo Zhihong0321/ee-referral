@@ -60,8 +60,8 @@ export async function processWhatsappAgentMessages(
         continue;
       }
 
-      if (await hasEtMessage(message.externalMessageId, "inbound")) {
-        results.push({ id: message.externalMessageId, status: "skipped", reason: "already_processed" });
+      if (await hasEtMessage(`agent_reply_${message.externalMessageId}`, "outbound")) {
+        results.push({ id: message.externalMessageId, status: "skipped", reason: "already_replied" });
         continue;
       }
 
@@ -69,16 +69,18 @@ export async function processWhatsappAgentMessages(
 
       let sendResult: unknown = null;
       if (!dryRun) {
-        await insertEtMessage({
-          externalMessageId: message.externalMessageId,
-          direction: "inbound",
-          messageType: message.messageType || "text",
-          textContent: message.text,
-          rawPayload: message.rawPayload || {},
-          senderPhone,
-          recipientPhone,
-          channelSessionId: channelSession.id,
-        });
+        if (!(await hasEtMessage(message.externalMessageId, "inbound"))) {
+          await insertEtMessage({
+            externalMessageId: message.externalMessageId,
+            direction: "inbound",
+            messageType: message.messageType || "text",
+            textContent: message.text,
+            rawPayload: message.rawPayload || {},
+            senderPhone,
+            recipientPhone,
+            channelSessionId: channelSession.id,
+          });
+        }
 
         sendResult = await sendWhatsappText(senderPhone, reply);
         await insertEtMessage({
