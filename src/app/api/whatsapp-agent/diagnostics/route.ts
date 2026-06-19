@@ -50,11 +50,27 @@ export async function GET() {
       hasWebhookVerifyToken: Boolean(process.env.WHATSAPP_AGENT_WEBHOOK_VERIFY_TOKEN),
       hasLlmApiKey: Boolean(process.env.WHATSAPP_AGENT_LLM_API_KEY || process.env.MINIMAX_API_KEY),
       llmModel: process.env.WHATSAPP_AGENT_LLM_MODEL || "MiniMax-M3",
-      hasAsrApiKey: Boolean(process.env.WHATSAPP_AGENT_ASR_API_KEY || process.env.WHATSAPP_AGENT_LLM_API_KEY || process.env.MINIMAX_API_KEY),
-      asrUrl:
-        process.env.WHATSAPP_AGENT_ASR_URL ||
-        `${(process.env.WHATSAPP_AGENT_ASR_BASE_URL || process.env.WHATSAPP_AGENT_LLM_BASE_URL || "https://api.minimax.io").replace(/\/$/, "")}/v1/audio/transcriptions`,
-      asrModel: process.env.WHATSAPP_AGENT_ASR_MODEL || "whisper-1",
+      asrProvider:
+        process.env.WHATSAPP_AGENT_ASR_PROVIDER ||
+        (process.env.WHATSAPP_AGENT_UNIAPI_API_KEY || process.env.UNIAPI_API_KEY
+          ? "uniapi"
+          : process.env.WHATSAPP_AGENT_GEMINI_API_KEY || process.env.GEMINI_API_KEY
+            ? "gemini"
+            : "custom"),
+      hasAsrApiKey: Boolean(
+        process.env.WHATSAPP_AGENT_ASR_API_KEY ||
+          process.env.WHATSAPP_AGENT_UNIAPI_API_KEY ||
+          process.env.UNIAPI_API_KEY ||
+          process.env.WHATSAPP_AGENT_GEMINI_API_KEY ||
+          process.env.GEMINI_API_KEY,
+      ),
+      asrUrl: process.env.WHATSAPP_AGENT_ASR_URL || "",
+      uniApiBaseUrl: process.env.WHATSAPP_AGENT_UNIAPI_BASE_URL || process.env.UNIAPI_BASE_URL || "https://api.uniapi.io/gemini",
+      asrModel:
+        process.env.WHATSAPP_AGENT_UNIAPI_ASR_MODEL ||
+        process.env.WHATSAPP_AGENT_GEMINI_ASR_MODEL ||
+        process.env.WHATSAPP_AGENT_ASR_MODEL ||
+        (process.env.WHATSAPP_AGENT_ASR_PROVIDER === "gemini" || process.env.WHATSAPP_AGENT_ASR_PROVIDER === "uniapi" ? "gemini-2.5-flash" : ""),
       baileysBaseUrl,
       sessionId,
       tenantId: config.tenantId,

@@ -110,7 +110,7 @@ Media handling:
 - `contact` / `contacts`: parsed from `raw_payload.message.contactMessage` or `contactsArrayMessage`, then sent to the agent as lead name/phone details.
 - `image`: `media_url` is resolved and sent to MiniMax M3 as an image block for visual extraction.
 - `video`: `media_url` is resolved and sent to MiniMax M3 as a video block for visual extraction.
-- `audio` / voice note: `media_url` is downloaded and sent to ASR first, then the transcript is sent to the agent.
+- `audio` / voice note: `media_url` is downloaded and sent to ASR first, then the transcript is sent to the agent. The verified provider path is UniAPI's Gemini-compatible API with `WHATSAPP_AGENT_ASR_PROVIDER=uniapi`, `WHATSAPP_AGENT_UNIAPI_BASE_URL=https://api.uniapi.io/gemini`, and `WHATSAPP_AGENT_UNIAPI_API_KEY`.
 - `document` / `sticker`: caption, filename, and media URL are preserved; the agent asks for missing text details when the content is not extractable.
 
 Webhook/testing payloads are still supported through:
