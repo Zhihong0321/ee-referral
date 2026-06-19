@@ -552,7 +552,7 @@ async function main() {
         SELECT id::text, external_message_id, message_type, text_content, raw_payload, created_at::text
         FROM et_messages
         WHERE channel = 'whatsapp'
-          AND message_type IN ('contact', 'contacts')
+          AND message_type IN ('contact', 'contacts', 'contactMessage', 'contactsArrayMessage')
         ORDER BY created_at DESC NULLS LAST, id DESC
         LIMIT $1
       `,

@@ -332,7 +332,7 @@ async function prepareWhatsappInboundForAgent(message: WhatsappAgentMessageInput
   const rawPayload = message.rawPayload || {};
   const media: WhatsappAgentMediaInput[] = [];
 
-  if (messageType === "contact" || messageType === "contacts") {
+  if (messageType === "contact" || messageType === "contacts" || messageType === "contactmessage" || messageType === "contactsarraymessage") {
     const contacts = extractContactsFromPayload(rawPayload);
     if (contacts.length > 0) {
       const contactLines = contacts.map((contact, index) => {
