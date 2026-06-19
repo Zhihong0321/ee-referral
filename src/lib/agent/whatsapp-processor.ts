@@ -7,7 +7,7 @@ import {
   listUnrepliedWhatsappInboundMessages,
   sendWhatsappText,
 } from "@/lib/agent/whatsapp-data";
-import { runWhatsappAgentTurn, type WhatsappAgentMediaInput } from "@/lib/agent/whatsapp-flow";
+import { runWhatsappAgentTurn } from "@/lib/agent/whatsapp-flow";
 import { toCanonicalMalaysiaPhone } from "@/lib/phone-normalization";
 
 export type WhatsappAgentMessageInput = {
@@ -148,6 +148,26 @@ function getAudioMimeType(url: string) {
   return "audio/ogg";
 }
 
+function getVisualMimeType(url: string, messageType: "image" | "video") {
+  const pathname = (() => {
+    try {
+      return new URL(url).pathname.toLowerCase();
+    } catch {
+      return url.toLowerCase();
+    }
+  })();
+
+  if (messageType === "image") {
+    if (pathname.endsWith(".png")) return "image/png";
+    if (pathname.endsWith(".webp")) return "image/webp";
+    return "image/jpeg";
+  }
+
+  if (pathname.endsWith(".webm")) return "video/webm";
+  if (pathname.endsWith(".mov")) return "video/quicktime";
+  return "video/mp4";
+}
+
 async function transcribeWhatsappAudio(mediaUrl: string) {
   const resolvedUrl = resolveWhatsappMediaUrl(mediaUrl);
   if (!resolvedUrl) return "";
@@ -223,12 +243,89 @@ async function transcribeWhatsappAudio(mediaUrl: string) {
   throw new Error("UniAPI ASR returned an empty transcript.");
 }
 
+async function describeWhatsappVisual(mediaUrl: string, messageType: "image" | "video", caption: string) {
+  const resolvedUrl = resolveWhatsappMediaUrl(mediaUrl);
+  if (!resolvedUrl) return "";
+
+  const mediaResponse = await fetch(resolvedUrl, { cache: "no-store" });
+  if (!mediaResponse.ok) {
+    throw new Error(`Unable to download WhatsApp ${messageType}: HTTP ${mediaResponse.status}`);
+  }
+
+  const contentType = mediaResponse.headers.get("content-type") || getVisualMimeType(resolvedUrl, messageType);
+  const mediaBase64 = Buffer.from(await mediaResponse.arrayBuffer()).toString("base64");
+
+  const apiKey = process.env.WHATSAPP_AGENT_UNIAPI_API_KEY || "";
+  if (!apiKey) {
+    throw new Error("WHATSAPP_AGENT_UNIAPI_API_KEY is not set.");
+  }
+
+  const baseUrl = (process.env.WHATSAPP_AGENT_UNIAPI_BASE_URL || "").replace(/\/$/, "");
+  if (!baseUrl) {
+    throw new Error("WHATSAPP_AGENT_UNIAPI_BASE_URL is not set.");
+  }
+
+  const model = process.env.WHATSAPP_AGENT_UNIAPI_ASR_MODEL || "";
+  if (!model) {
+    throw new Error("WHATSAPP_AGENT_UNIAPI_ASR_MODEL is not set.");
+  }
+
+  const response = await fetch(`${baseUrl}/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+    method: "POST",
+    headers: {
+      "x-goog-api-key": apiKey,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      contents: [
+        {
+          role: "user",
+          parts: [
+            {
+              text: [
+                `Convert this WhatsApp ${messageType} into plain text for a referral assistant.`,
+                "Extract any visible lead phone number, name, area, preferred agent, or referral instruction.",
+                "Return only referral-relevant details.",
+                "If no referral lead details are visible, return exactly: No referral lead details visible.",
+                caption ? `Caption: ${caption}` : "",
+              ]
+                .filter(Boolean)
+                .join("\n"),
+            },
+            {
+              inline_data: {
+                mime_type: contentType,
+                data: mediaBase64,
+              },
+            },
+          ],
+        },
+      ],
+    }),
+  });
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(`UniAPI ${messageType} text conversion failed: HTTP ${response.status}: ${text.slice(0, 300)}`);
+  }
+
+  const payload = JSON.parse(text) as {
+    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+  };
+  const converted =
+    payload.candidates?.[0]?.content?.parts
+      ?.map((part) => part.text?.trim() || "")
+      .filter(Boolean)
+      .join("\n")
+      .trim() || "";
+  if (converted) return converted;
+  throw new Error(`UniAPI ${messageType} text conversion returned empty text.`);
+}
+
 async function prepareWhatsappInboundForAgent(message: WhatsappAgentMessageInput) {
   const messageType = normalizeMessageType(message.messageType);
   const text = (message.text || "").trim();
   const mediaUrl = resolveWhatsappMediaUrl(message.mediaUrl || "");
   const rawPayload = message.rawPayload || {};
-  const media: WhatsappAgentMediaInput[] = [];
 
   if (messageType === "contact" || messageType === "contacts" || messageType === "contactmessage" || messageType === "contactsarraymessage") {
     const contacts = extractContactsFromPayload(rawPayload);
@@ -248,7 +345,6 @@ async function prepareWhatsappInboundForAgent(message: WhatsappAgentMessageInput
       ]
         .filter(Boolean)
         .join("\n"),
-        media,
       };
     }
   }
@@ -266,7 +362,6 @@ async function prepareWhatsappInboundForAgent(message: WhatsappAgentMessageInput
             ]
               .filter(Boolean)
               .join("\n"),
-            media,
           };
         }
       } catch (error) {
@@ -279,7 +374,6 @@ async function prepareWhatsappInboundForAgent(message: WhatsappAgentMessageInput
           ]
             .filter(Boolean)
             .join("\n"),
-          media,
         };
       }
     }
@@ -293,34 +387,17 @@ async function prepareWhatsappInboundForAgent(message: WhatsappAgentMessageInput
     ]
       .filter(Boolean)
       .join("\n"),
-      media,
     };
   }
 
   if (messageType === "image" && mediaUrl) {
-    media.push({ type: "image", url: mediaUrl });
-    return {
-      text: [
-        "WhatsApp image received. Inspect the attached image for referral lead details such as phone number, name, area, and preferred agent.",
-        text ? `Caption/preview: ${text}` : "",
-      ]
-        .filter(Boolean)
-        .join("\n"),
-      media,
-    };
+    const converted = await describeWhatsappVisual(mediaUrl, "image", text);
+    return { text: `WhatsApp image received and converted to text.\n${converted}` };
   }
 
   if (messageType === "video" && mediaUrl) {
-    media.push({ type: "video", url: mediaUrl });
-    return {
-      text: [
-        "WhatsApp video received. Inspect the attached video for referral lead details such as phone number, name, area, and preferred agent.",
-        text ? `Caption/preview: ${text}` : "",
-      ]
-        .filter(Boolean)
-        .join("\n"),
-      media,
-    };
+    const converted = await describeWhatsappVisual(mediaUrl, "video", text);
+    return { text: `WhatsApp video received and converted to text.\n${converted}` };
   }
 
   if (["document", "sticker"].includes(messageType)) {
@@ -333,12 +410,11 @@ async function prepareWhatsappInboundForAgent(message: WhatsappAgentMessageInput
     ]
       .filter(Boolean)
       .join("\n"),
-      media,
     };
   }
 
   if (text) {
-    return { text, media };
+    return { text };
   }
 
   if (mediaUrl) {
@@ -348,11 +424,10 @@ async function prepareWhatsappInboundForAgent(message: WhatsappAgentMessageInput
       `Media file: ${mediaUrl}`,
       "Ask the user to send the referral details in text.",
     ].join("\n"),
-      media,
     };
   }
 
-  return { text: "", media };
+  return { text: "" };
 }
 
 export async function processWhatsappAgentMessages(
@@ -380,7 +455,7 @@ export async function processWhatsappAgentMessages(
 
       const agentInput = await prepareWhatsappInboundForAgent(message);
       const agentText = agentInput.text;
-      const reply = await runWhatsappAgentTurn({ senderPhone, text: agentText, media: agentInput.media });
+      const reply = await runWhatsappAgentTurn({ senderPhone, text: agentText });
 
       let sendResult: unknown = null;
       if (!dryRun) {
@@ -421,7 +496,6 @@ export async function processWhatsappAgentMessages(
         status: dryRun ? "dry_run" : "processed",
         senderPhone,
         text: agentText,
-        media: agentInput.media,
         reply,
       });
     } catch (error) {

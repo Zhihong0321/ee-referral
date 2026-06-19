@@ -40,21 +40,12 @@ const LLM_API_KEY =
   process.env.WHATSAPP_AGENT_LLM_API_KEY || process.env.MINIMAX_API_KEY || "";
 const MAX_TOOL_ROUNDS = 5;
 
-export type WhatsappAgentMediaInput = {
-  type: "image" | "video";
-  url: string;
-};
-
-type TextContentBlock = { type: "text"; text: string };
-type MediaContentBlock =
-  | { type: "image"; source: { type: "url"; url: string } }
-  | { type: "video"; source: { type: "url"; url: string } };
 type ToolResultContentBlock = { type: "tool_result"; tool_use_id: string; content: string };
 type ResponseContentBlock =
   | { type: "text"; text: string }
   | { type: "thinking"; thinking: string; signature?: string }
   | { type: "tool_use"; id: string; name: string; input: Record<string, unknown> };
-type ContentBlock = TextContentBlock | MediaContentBlock | ToolResultContentBlock | ResponseContentBlock;
+type ContentBlock = ToolResultContentBlock | ResponseContentBlock;
 
 type AnthropicMessage = { role: "user" | "assistant"; content: string | ContentBlock[] };
 
@@ -136,7 +127,7 @@ function buildSystemPrompt(
     "",
     "ADDING A LEAD — keep it minimal. You only NEED the lead's contact number. Also try to capture the lead's NAME and AREA (town/city). If the user doesn't know or says skip, proceed without them — never block on it. NEVER ask for full address, relationship, or project type. The moment you have a contact number, you may add the lead; ask for name/area in the same friendly flow but don't nag.",
     "",
-    "WHATSAPP NON-TEXT INPUT — contact cards are parsed into text before you see them; if a contact card contains a phone number, treat it as lead details and add the lead once the referrer is registered. Images/videos may be attached as real visual input; inspect them for referral lead details such as phone number, name, area, or preferred agent. Voice notes are transcribed before you see them; use the transcript like a normal user message. If media does not contain enough lead details, ask for the missing lead phone/name/area in text.",
+    "WHATSAPP NON-TEXT INPUT — non-text WhatsApp messages are converted to plain text before you see them. Contact cards become name/phone text. Voice notes become transcripts. Images/videos/documents/stickers become text summaries or captions. Use that text like a normal user message. If it does not contain enough lead details, ask for the missing lead phone/name/area in text.",
     "",
     "PREFERRED AGENT — phrases like 'pass to X', 'assign to X', 'let X handle', 'give to X', 'PIC X', or 'preferred agent X' mean X is the AGENT (a salesperson from the AVAILABLE AGENTS list) who should handle this lead. X is NEVER the lead's name. Pass X as add_lead's preferred_agent (or update_lead field 'agent'). Match X to an AVAILABLE AGENT; if there's no match, tell the user who is available and don't guess. Never put an agent's name into the lead's name field.",
     "",
@@ -208,45 +199,25 @@ async function callModel(system: string, messages: AnthropicMessage[]) {
 
 // Anthropic requires the conversation to start with a user turn and alternate
 // roles. Drop leading assistant turns and merge consecutive same-role text.
-function toUserContent(currentUserText: string, media: WhatsappAgentMediaInput[] = []): string | ContentBlock[] {
-  if (media.length === 0) {
-    return currentUserText;
-  }
-
-  return [
-    { type: "text" as const, text: currentUserText },
-    ...media.map((item) =>
-      item.type === "image"
-        ? ({ type: "image" as const, source: { type: "url" as const, url: item.url } })
-        : ({ type: "video" as const, source: { type: "url" as const, url: item.url } }),
-    ),
-  ];
-}
-
 function toCleanMessages(
   history: Array<{ role: "user" | "assistant"; text: string }>,
   currentUserText: string,
-  media: WhatsappAgentMediaInput[] = [],
 ): AnthropicMessage[] {
   const combined = [...history, { role: "user" as const, text: currentUserText }];
   const result: AnthropicMessage[] = [];
 
   for (const turn of combined) {
     if (result.length === 0 && turn.role === "assistant") continue;
-    const isCurrentUserTurn = turn === combined[combined.length - 1] && turn.role === "user";
     const last = result[result.length - 1];
-    if (!isCurrentUserTurn && last && last.role === turn.role && typeof last.content === "string") {
+    if (last && last.role === turn.role && typeof last.content === "string") {
       last.content = `${last.content}\n${turn.text}`;
     } else {
-      result.push({
-        role: turn.role,
-        content: isCurrentUserTurn ? toUserContent(turn.text, media) : turn.text,
-      });
+      result.push({ role: turn.role, content: turn.text });
     }
   }
 
   if (result.length === 0) {
-    result.push({ role: "user", content: toUserContent(currentUserText, media) });
+    result.push({ role: "user", content: currentUserText });
   }
   return result;
 }
@@ -377,7 +348,7 @@ async function executeTool(name: string, input: Record<string, unknown>, ctx: To
   }
 }
 
-export async function runWhatsappAgentTurn(input: { senderPhone: string; text: string; media?: WhatsappAgentMediaInput[] }) {
+export async function runWhatsappAgentTurn(input: { senderPhone: string; text: string }) {
   const message = input.text.trim();
   if (!message) {
     return "I received your message, but I couldn't read any text in it. Please send a text message.";
@@ -395,7 +366,7 @@ export async function runWhatsappAgentTurn(input: { senderPhone: string; text: s
   ]);
 
   const ctx: ToolContext = { senderPhone: input.senderPhone, referrer, leads, agents };
-  const messages = toCleanMessages(history, message, input.media || []);
+  const messages = toCleanMessages(history, message);
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
     const { content, stopReason } = await callModel(buildSystemPrompt(ctx.referrer, ctx.leads, ctx.agents), messages);
