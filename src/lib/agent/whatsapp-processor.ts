@@ -130,7 +130,7 @@ function extractContactsFromPayload(rawPayload: Record<string, unknown>) {
     .filter((contact) => contact.displayName || contact.phone);
 }
 
-function getAudioMimeType(url: string, fallback = "audio/ogg") {
+function getAudioMimeType(url: string) {
   const pathname = (() => {
     try {
       return new URL(url).pathname.toLowerCase();
@@ -145,18 +145,7 @@ function getAudioMimeType(url: string, fallback = "audio/ogg") {
   if (pathname.endsWith(".wav")) return "audio/wav";
   if (pathname.endsWith(".webm")) return "audio/webm";
   if (pathname.endsWith(".oga") || pathname.endsWith(".ogg") || pathname.endsWith(".opus")) return "audio/ogg";
-  return fallback;
-}
-
-function filenameFromMediaUrl(url: string, fallback: string) {
-  try {
-    const pathname = new URL(url).pathname;
-    const name = pathname.split("/").filter(Boolean).pop();
-    return name || fallback;
-  } catch {
-    const name = url.split(/[\\/]/).filter(Boolean).pop();
-    return name || fallback;
-  }
+  return "audio/ogg";
 }
 
 async function transcribeWhatsappAudio(mediaUrl: string) {
@@ -170,159 +159,68 @@ async function transcribeWhatsappAudio(mediaUrl: string) {
 
   const contentType = audioResponse.headers.get("content-type") || getAudioMimeType(resolvedUrl);
   const audioBytes = await audioResponse.arrayBuffer();
-  const filename = filenameFromMediaUrl(resolvedUrl, "whatsapp-voice-note.ogg");
   const provider = (process.env.WHATSAPP_AGENT_ASR_PROVIDER || "").trim().toLowerCase();
-  const geminiKey = process.env.WHATSAPP_AGENT_GEMINI_API_KEY || process.env.GEMINI_API_KEY || "";
-  const uniApiKey = process.env.WHATSAPP_AGENT_UNIAPI_API_KEY || process.env.UNIAPI_API_KEY || "";
-  const audioBase64 = Buffer.from(audioBytes).toString("base64");
-
-  if (provider === "uniapi" || provider === "uniapi-gemini" || (!provider && uniApiKey)) {
-    if (!uniApiKey) {
-      throw new Error("WHATSAPP_AGENT_UNIAPI_API_KEY (or UNIAPI_API_KEY) is not set.");
-    }
-
-    const baseUrl = (process.env.WHATSAPP_AGENT_UNIAPI_BASE_URL || process.env.UNIAPI_BASE_URL || "https://api.uniapi.io/gemini").replace(/\/$/, "");
-    const model = process.env.WHATSAPP_AGENT_UNIAPI_ASR_MODEL || process.env.WHATSAPP_AGENT_ASR_MODEL || "gemini-2.5-flash";
-    const response = await fetch(`${baseUrl}/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
-      method: "POST",
-      headers: {
-        "x-goog-api-key": uniApiKey,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        contents: [
-          {
-            role: "user",
-            parts: [
-              {
-                text: "Transcribe this WhatsApp voice note exactly. Return only the transcript text. If the speech is not English, Malay, or Chinese, still transcribe in the original language.",
-              },
-              {
-                inline_data: {
-                  mime_type: contentType,
-                  data: audioBase64,
-                },
-              },
-            ],
-          },
-        ],
-      }),
-    });
-    const text = await response.text();
-    if (!response.ok) {
-      throw new Error(`UniAPI ASR failed: HTTP ${response.status}: ${text.slice(0, 300)}`);
-    }
-
-    const payload = JSON.parse(text) as {
-      candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-    };
-    const transcript =
-      payload.candidates?.[0]?.content?.parts
-        ?.map((part) => part.text?.trim() || "")
-        .filter(Boolean)
-        .join("\n")
-        .trim() || "";
-    if (transcript) return transcript;
-    throw new Error("UniAPI ASR returned an empty transcript.");
+  if (provider !== "uniapi") {
+    throw new Error("Voice-note transcription requires WHATSAPP_AGENT_ASR_PROVIDER=uniapi.");
   }
 
-  if (provider === "gemini" || (!provider && geminiKey)) {
-    if (!geminiKey) {
-      throw new Error("WHATSAPP_AGENT_GEMINI_API_KEY (or GEMINI_API_KEY) is not set.");
-    }
+  const uniApiKey = process.env.WHATSAPP_AGENT_UNIAPI_API_KEY || "";
+  if (!uniApiKey) {
+    throw new Error("WHATSAPP_AGENT_UNIAPI_API_KEY is not set.");
+  }
 
-    const model = process.env.WHATSAPP_AGENT_GEMINI_ASR_MODEL || process.env.WHATSAPP_AGENT_ASR_MODEL || "gemini-2.5-flash";
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(geminiKey)}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [
+  const baseUrl = (process.env.WHATSAPP_AGENT_UNIAPI_BASE_URL || "").replace(/\/$/, "");
+  if (!baseUrl) {
+    throw new Error("WHATSAPP_AGENT_UNIAPI_BASE_URL is not set.");
+  }
+
+  const model = process.env.WHATSAPP_AGENT_UNIAPI_ASR_MODEL || "";
+  if (!model) {
+    throw new Error("WHATSAPP_AGENT_UNIAPI_ASR_MODEL is not set.");
+  }
+
+  const audioBase64 = Buffer.from(audioBytes).toString("base64");
+  const response = await fetch(`${baseUrl}/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+    method: "POST",
+    headers: {
+      "x-goog-api-key": uniApiKey,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      contents: [
+        {
+          role: "user",
+          parts: [
             {
-              role: "user",
-              parts: [
-                {
-                  text:
-                    "Transcribe this WhatsApp voice note exactly. Return only the transcript text. If the speech is not English, Malay, or Chinese, still transcribe in the original language.",
-                },
-                {
-                  inline_data: {
-                    mime_type: contentType,
-                    data: audioBase64,
-                  },
-                },
-              ],
+              text: "Transcribe this WhatsApp voice note exactly. Return only the transcript text. If the speech is not English, Malay, or Chinese, still transcribe in the original language.",
+            },
+            {
+              inline_data: {
+                mime_type: contentType,
+                data: audioBase64,
+              },
             },
           ],
-        }),
-      },
-    );
-    const text = await response.text();
-    if (!response.ok) {
-      throw new Error(`Gemini ASR failed: HTTP ${response.status}: ${text.slice(0, 300)}`);
-    }
-
-    const payload = JSON.parse(text) as {
-      candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-    };
-    const transcript =
-      payload.candidates?.[0]?.content?.parts
-        ?.map((part) => part.text?.trim() || "")
-        .filter(Boolean)
-        .join("\n")
-        .trim() || "";
-    if (transcript) return transcript;
-    throw new Error("Gemini ASR returned an empty transcript.");
+        },
+      ],
+    }),
+  });
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(`UniAPI ASR failed: HTTP ${response.status}: ${text.slice(0, 300)}`);
   }
 
-  const asrUrl = process.env.WHATSAPP_AGENT_ASR_URL || "";
-  const apiKey = process.env.WHATSAPP_AGENT_ASR_API_KEY || "";
-  if (!asrUrl || !apiKey) {
-    throw new Error("Voice-note transcription is not configured. Set WHATSAPP_AGENT_ASR_PROVIDER=uniapi with WHATSAPP_AGENT_UNIAPI_API_KEY, or set WHATSAPP_AGENT_ASR_URL and WHATSAPP_AGENT_ASR_API_KEY.");
-  }
-
-  const model = (process.env.WHATSAPP_AGENT_ASR_MODEL || "").trim();
-
-  const buildForm = (includeModel: boolean) => {
-    const form = new FormData();
-    if (includeModel && model) {
-      form.append("model", model);
-    }
-    const language = process.env.WHATSAPP_AGENT_ASR_LANGUAGE?.trim();
-    if (language) {
-      form.append("language", language);
-    }
-    form.append("response_format", "json");
-    form.append("file", new Blob([audioBytes], { type: contentType }), filename);
-    return form;
+  const payload = JSON.parse(text) as {
+    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
   };
-
-  const attempts = [buildForm(true), buildForm(false)];
-  let lastError = "";
-
-  for (const body of attempts) {
-    const response = await fetch(asrUrl, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${apiKey}` },
-      body,
-    });
-    const text = await response.text();
-    if (!response.ok) {
-      lastError = `HTTP ${response.status}: ${text.slice(0, 300)}`;
-      continue;
-    }
-
-    try {
-      const payload = JSON.parse(text) as { text?: unknown; transcript?: unknown; transcription?: unknown };
-      const transcript = stringFrom(payload.text) || stringFrom(payload.transcript) || stringFrom(payload.transcription);
-      if (transcript) return transcript;
-    } catch {
-      if (text.trim()) return text.trim();
-    }
-  }
-
-  throw new Error(`MiniMax ASR failed: ${lastError || "empty transcript"}`);
+  const transcript =
+    payload.candidates?.[0]?.content?.parts
+      ?.map((part) => part.text?.trim() || "")
+      .filter(Boolean)
+      .join("\n")
+      .trim() || "";
+  if (transcript) return transcript;
+  throw new Error("UniAPI ASR returned an empty transcript.");
 }
 
 async function prepareWhatsappInboundForAgent(message: WhatsappAgentMessageInput) {
