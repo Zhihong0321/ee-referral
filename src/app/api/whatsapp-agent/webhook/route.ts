@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 
 import {
-  isWhatsappAgentRequestAuthorized,
   processWhatsappAgentMessages,
   type WhatsappAgentMessageInput,
 } from "@/lib/agent/whatsapp-processor";
@@ -312,10 +311,6 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  if (!isWhatsappAgentRequestAuthorized(request, ["WHATSAPP_AGENT_WEBHOOK_SECRET", "WHATSAPP_AGENT_PROCESS_SECRET"])) {
-    return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
-  }
-
   const logId = createWebhookLogId();
   const logContext = getRequestLogContext(request, logId);
 

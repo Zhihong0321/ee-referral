@@ -43,6 +43,10 @@ Authorization: Bearer <WHATSAPP_AGENT_DEBUG_SECRET>
 `WHATSAPP_AGENT_PROCESS_SECRET` is also accepted. Never expose these routes
 without authentication because they contain customer and operational data.
 
+The inbound webhook remains reachable by the configured Baileys service, which
+does not currently attach an authorization header. Do not add mandatory webhook
+authentication without first updating Baileys to send the same credential.
+
 `dryRun:true` prepares and reports normalized inbound content only. It does not
 run the workflow, mutate state, write leads, or send WhatsApp messages.
 

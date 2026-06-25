@@ -88,7 +88,6 @@ Railway environment variables to set:
 - `WHATSAPP_AGENT_BAILEYS_SESSION_ID`
 - `WHATSAPP_AGENT_PROCESS_SECRET`
 - `WHATSAPP_AGENT_DEBUG_SECRET`
-- `WHATSAPP_AGENT_WEBHOOK_SECRET`
 - `MINIMAX_API_KEY` or `WHATSAPP_AGENT_LLM_API_KEY`
 - `WHATSAPP_AGENT_VISION_API_KEY`
 
@@ -126,7 +125,9 @@ Webhook/testing payloads are still supported through:
 POST /api/whatsapp-agent/webhook
 ```
 
-Production POST requests require `Authorization: Bearer <WHATSAPP_AGENT_WEBHOOK_SECRET>` (the process secret is also accepted).
+The configured Baileys service currently posts to this endpoint without an
+authorization header. Add mandatory webhook authentication only after Baileys is
+configured to send the same credential.
 
 The route accepts Meta WhatsApp Cloud API webhook payloads, Baileys-style `messages` arrays, or a simple normalized payload:
 
