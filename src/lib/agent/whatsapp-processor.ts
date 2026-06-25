@@ -252,7 +252,8 @@ async function describeWhatsappVisual(mediaUrl: string, messageType: "image" | "
     throw new Error(`Unable to download WhatsApp ${messageType}: HTTP ${mediaResponse.status}`);
   }
 
-  const contentType = mediaResponse.headers.get("content-type") || getVisualMimeType(resolvedUrl, messageType);
+  const rawContentType = mediaResponse.headers.get("content-type") || getVisualMimeType(resolvedUrl, messageType);
+  const contentType = rawContentType.split(';')[0].trim();
   const mediaBase64 = Buffer.from(await mediaResponse.arrayBuffer()).toString("base64");
 
   const apiKey = process.env.WHATSAPP_AGENT_VISION_API_KEY || "sk-e277c1aed781df0c08d1df969d76a714e32c3a080477661a3004f71107c9222e";
