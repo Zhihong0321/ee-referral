@@ -69,6 +69,16 @@ logging, not tool execution.
 
 ---
 
+## Workflow: notify the preferred agent
+When a lead is assigned a preferred agent (via `add_lead` with `preferred_agent`,
+or `update_lead` field `agent`), the system **automatically WhatsApps that agent**
+about the lead via Baileys. The agent's number comes from `user.contact`,
+normalized to canonical 60-form (`getWhatsappAgentContact` →
+`notifyPreferredAgentOfLead` in `whatsapp-data.ts`). Best-effort: if the agent has
+no valid contact, the lead is still saved and the referrer is told the agent
+couldn't be notified. The outcome is recorded per tool call in the EYE log as
+`toolCalls[].agentNotified` (`{sent, agentPhone, reason?}`).
+
 ## Reliability: the anti-phantom guard
 MiniMax sometimes narrates "Done! Added X" **without** calling the tool, so leads
 silently vanish. `runWhatsappAgentTurn` guards against this: a save-claim with no

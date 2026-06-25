@@ -19,6 +19,7 @@ import {
   listWhatsappAgents,
   listWhatsappReferrals,
   loadConversation,
+  notifyPreferredAgentOfLead,
   resolveOrCreateReferrerByWhatsappPhone,
   saveReferrerProfile,
   updateWhatsappReferral,
@@ -148,7 +149,7 @@ function buildSystemPrompt(
     "",
     "PREFERRED AGENT — phrases like 'pass to X', 'assign to X', 'let X handle', 'give to X', 'PIC X', or 'preferred agent X' mean X is the AGENT (a salesperson from the AVAILABLE AGENTS list) who should handle this lead. X is NEVER the lead's name. Pass X as add_lead's preferred_agent (or update_lead field 'agent'). Match X to an AVAILABLE AGENT; if there's no match, tell the user who is available and don't guess. Never put an agent's name into the lead's name field.",
     "",
-    "ASK PREFERRED AGENT ON EVERY NEW LEAD — every time you successfully add a NEW lead, if no preferred agent was already set for it, you MUST ask the referrer whether they have a preferred agent to handle this lead. Invite them to give a name and SHOW the available agents from the AVAILABLE AGENTS list. Example: 'Done! Added Kumar (60123334444). Do you have a preferred agent to handle this lead? Available: [list the agents] — or reply skip.' If they name one, set it on that lead with update_lead field 'agent'. If they reply no/skip, leave it unassigned and move on. If a preferred agent was already provided when adding, just confirm it instead of asking. If no agents are configured, skip this question.",
+    "ASK PREFERRED AGENT ON EVERY NEW LEAD — every time you successfully add a NEW lead, if no preferred agent was already set for it, you MUST ask the referrer whether they have a preferred agent to handle this lead. Invite them to give a name and SHOW the available agents from the AVAILABLE AGENTS list. Example: 'Done! Added Kumar (60123334444). Do you have a preferred agent to handle this lead? Available: [list the agents] — or reply skip.' If they name one, set it on that lead with update_lead field 'agent'. If they reply no/skip, leave it unassigned and move on. If a preferred agent was already provided when adding, just confirm it instead of asking. If no agents are configured, skip this question. When a preferred agent is set, the system automatically WhatsApps that agent about the lead — after the tool succeeds, briefly tell the referrer the agent was notified (e.g. 'I've let Zhi Hong know about this lead.'). If the tool result's agent_notified shows sent=false, tell the referrer the agent could not be notified (no contact number on file).",
     "",
     "ONBOARDING — if 'Registered' below is NO, the referrer's account is not set up yet. You MUST NOT call add_lead or update_lead until they are registered. This step is important, so be clear and descriptive — not casual or jokey. Your FIRST onboarding message must explain, professionally:",
     "  • that before they can submit referrals, you need to properly set up their Referral Account;",
@@ -317,12 +318,32 @@ async function executeTool(name: string, input: Record<string, unknown>, ctx: To
         { preferredAgentId },
       );
       ctx.leads = await listWhatsappReferrals(ctx.referrer.customerId);
+
+      // If a preferred agent was set on this new lead, WhatsApp that agent.
+      let agentNotified: { sent: boolean; agentPhone: string; reason?: string } | undefined;
+      if (preferredAgentId && preferredAgentName) {
+        try {
+          agentNotified = await notifyPreferredAgentOfLead({
+            agentId: preferredAgentId,
+            agentName: preferredAgentName,
+            leadName: str(input.name),
+            leadMobile: mobile,
+            area: str(input.area),
+            referrerName: ctx.referrer.name,
+            referrerPhone: ctx.referrer.phone,
+          });
+        } catch (error) {
+          agentNotified = { sent: false, agentPhone: "", reason: error instanceof Error ? error.message : "notify failed" };
+        }
+      }
+
       return JSON.stringify({
         status: "saved",
         lead_id: referralId,
         name: str(input.name) || "(no name)",
         mobile,
         preferred_agent: preferredAgentName || undefined,
+        agent_notified: agentNotified,
       });
     }
 
@@ -358,7 +379,33 @@ async function executeTool(name: string, input: Record<string, unknown>, ctx: To
       }
       const updated = await updateWhatsappReferral(ctx.referrer, { referralId: lead.id, field, value });
       ctx.leads = await listWhatsappReferrals(ctx.referrer.customerId);
-      return JSON.stringify({ status: "saved", lead: updated.leadName, field: str(input.field), value: displayValue });
+
+      // Assigning a preferred agent to an existing lead also notifies that agent.
+      let agentNotified: { sent: boolean; agentPhone: string; reason?: string } | undefined;
+      if (field === "preferredAgent") {
+        const area = [lead.leadState, lead.leadCity].map((v) => v?.trim()).filter(Boolean).join(", ");
+        try {
+          agentNotified = await notifyPreferredAgentOfLead({
+            agentId: value,
+            agentName: displayValue,
+            leadName: lead.leadName || "",
+            leadMobile: lead.leadMobile || "",
+            area,
+            referrerName: ctx.referrer.name,
+            referrerPhone: ctx.referrer.phone,
+          });
+        } catch (error) {
+          agentNotified = { sent: false, agentPhone: "", reason: error instanceof Error ? error.message : "notify failed" };
+        }
+      }
+
+      return JSON.stringify({
+        status: "saved",
+        lead: updated.leadName,
+        field: str(input.field),
+        value: displayValue,
+        agent_notified: agentNotified,
+      });
     }
 
     return JSON.stringify({ status: "error", message: `Unknown tool ${name}.` });
@@ -423,14 +470,20 @@ export async function runWhatsappAgentTurn(input: { senderPhone: string; text: s
     const toolResults: ToolResultContentBlock[] = [];
     for (const toolUse of toolUses) {
       const result = await executeTool(toolUse.name, toolUse.input, ctx);
-      let status = "";
+      let parsed: { status?: unknown; agent_notified?: unknown } = {};
       try {
-        status = String((JSON.parse(result) as { status?: unknown }).status ?? "");
+        parsed = JSON.parse(result) as { status?: unknown; agent_notified?: unknown };
       } catch {
-        status = "";
+        parsed = {};
       }
+      const status = String(parsed.status ?? "");
       if (WRITE_TOOL_NAMES.has(toolUse.name) && status === "saved") wroteThisTurn = true;
-      toolTrace.push({ name: toolUse.name, input: toolUse.input, status });
+      toolTrace.push({
+        name: toolUse.name,
+        input: toolUse.input,
+        status,
+        ...(parsed.agent_notified ? { agentNotified: parsed.agent_notified } : {}),
+      });
       toolResults.push({ type: "tool_result", tool_use_id: toolUse.id, content: result });
     }
     messages.push({ role: "user", content: toolResults });

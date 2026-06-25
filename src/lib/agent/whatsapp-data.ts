@@ -323,7 +323,7 @@ export type AgentDebugLogEntry = {
   registered: boolean;
   inbound: string;
   reply: string;
-  toolCalls: Array<{ name: string; input: unknown; status: string }>;
+  toolCalls: Array<{ name: string; input: unknown; status: string; agentNotified?: unknown }>;
   wrote: boolean;
   guardTrips: number;
   fallbackUsed: boolean;
@@ -409,6 +409,55 @@ export async function listWhatsappAgents(): Promise<WhatsappAgentOption[]> {
   );
 
   return rows.map((row) => ({ id: String(row.id), name: (row.name || "").trim() })).filter((agent) => agent.name);
+}
+
+// Look up an agent's WhatsApp contact number (user.contact) and normalize it to
+// canonical Malaysia 60-form so Baileys can deliver to it.
+export async function getWhatsappAgentContact(agentId: string): Promise<string> {
+  const id = (agentId || "").trim();
+  if (!id) return "";
+  const rows = await runWhatsappAgentSql<{ contact: string | null }>(
+    `SELECT contact FROM "user" WHERE id::text = $1 LIMIT 1`,
+    [id],
+  );
+  return toCanonicalMalaysiaPhone(rows[0]?.contact || "");
+}
+
+// Workflow: when a lead is assigned a preferred agent, WhatsApp that agent so
+// they know to follow up. Best-effort by design — callers wrap in try/catch so a
+// delivery failure never blocks the lead save or the referrer's reply.
+export async function notifyPreferredAgentOfLead(params: {
+  agentId: string;
+  agentName: string;
+  leadName: string;
+  leadMobile: string;
+  area: string;
+  referrerName: string;
+  referrerPhone: string;
+}): Promise<{ sent: boolean; agentPhone: string; reason?: string }> {
+  const agentPhone = await getWhatsappAgentContact(params.agentId);
+  if (agentPhone.length < 8) {
+    return { sent: false, agentPhone, reason: "agent has no valid contact number on file" };
+  }
+
+  const leadMobile = toCanonicalMalaysiaPhone(params.leadMobile) || params.leadMobile;
+  const referrerLabel = params.referrerName && params.referrerName !== REFERRAL_ACCOUNT_NAME ? params.referrerName : "a referrer";
+  const text = [
+    `Hi ${params.agentName}, you have a new referral lead to handle:`,
+    "",
+    `Name: ${params.leadName || "(not provided)"}`,
+    `Mobile: ${leadMobile || "(not provided)"}`,
+    params.area ? `Area: ${params.area}` : "",
+    "",
+    `Referred by: ${referrerLabel}${params.referrerPhone ? ` (${params.referrerPhone})` : ""}`,
+    "",
+    "Please follow up with this lead. — Referral Assistant",
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  await sendWhatsappText(agentPhone, text);
+  return { sent: true, agentPhone };
 }
 
 export async function resolveOrCreateReferrerByWhatsappPhone(senderPhone: string): Promise<WhatsappReferrerAccount> {

@@ -117,7 +117,7 @@ function buildSystemPrompt(referrer, leads, agents) {
     "",
     "PREFERRED AGENT — phrases like 'pass to X', 'assign to X', 'let X handle', 'give to X', 'PIC X', or 'preferred agent X' mean X is the AGENT (a salesperson from the AVAILABLE AGENTS list) who should handle this lead. X is NEVER the lead's name. Pass X as add_lead's preferred_agent (or update_lead field 'agent'). Match X to an AVAILABLE AGENT; if there's no match, tell the user who is available and don't guess. Never put an agent's name into the lead's name field.",
     "",
-    "ASK PREFERRED AGENT ON EVERY NEW LEAD — every time you successfully add a NEW lead, if no preferred agent was already set for it, you MUST ask the referrer whether they have a preferred agent to handle this lead. Invite them to give a name and SHOW the available agents from the AVAILABLE AGENTS list. Example: 'Done! Added Kumar (60123334444). Do you have a preferred agent to handle this lead? Available: [list the agents] — or reply skip.' If they name one, set it on that lead with update_lead field 'agent'. If they reply no/skip, leave it unassigned and move on. If a preferred agent was already provided when adding, just confirm it instead of asking. If no agents are configured, skip this question.",
+    "ASK PREFERRED AGENT ON EVERY NEW LEAD — every time you successfully add a NEW lead, if no preferred agent was already set for it, you MUST ask the referrer whether they have a preferred agent to handle this lead. Invite them to give a name and SHOW the available agents from the AVAILABLE AGENTS list. Example: 'Done! Added Kumar (60123334444). Do you have a preferred agent to handle this lead? Available: [list the agents] — or reply skip.' If they name one, set it on that lead with update_lead field 'agent'. If they reply no/skip, leave it unassigned and move on. If a preferred agent was already provided when adding, just confirm it instead of asking. If no agents are configured, skip this question. When a preferred agent is set, the system automatically WhatsApps that agent about the lead — after the tool succeeds, briefly tell the referrer the agent was notified (e.g. 'I've let Zhi Hong know about this lead.'). If the tool result's agent_notified shows sent=false, tell the referrer the agent could not be notified (no contact number on file).",
     "",
     "ONBOARDING — if 'Registered' below is NO, the referrer's account is not set up yet. You MUST NOT call add_lead or update_lead until they are registered. This step is important, so be clear and descriptive — not casual or jokey. Your FIRST onboarding message must explain, professionally:",
     "  • that before they can submit referrals, you need to properly set up their Referral Account;",
@@ -182,10 +182,12 @@ function executeTool(name, input, ctx) {
       const mobile = toCanonicalMalaysiaPhone(str(input.mobile));
       if (mobile.length < 8) return { status: "error", message: "A valid contact number is required to add a lead." };
       let preferredAgentName = "";
+      let preferredAgentId = "";
       if (str(input.preferred_agent)) {
         const resolved = resolveAgent(str(input.preferred_agent), ctx.agents);
         if (!resolved.ok) return { status: "error", message: resolved.message };
         preferredAgentName = resolved.name;
+        preferredAgentId = resolved.id;
       }
       const id = ctx.leads.length + 1;
       ctx.leads.push({
@@ -196,7 +198,8 @@ function executeTool(name, input, ctx) {
         status: "Pending",
         preferredAgentName,
       });
-      return { status: "saved", lead_id: id, name: str(input.name) || "(no name)", mobile, preferred_agent: preferredAgentName || undefined };
+      const addNotified = preferredAgentId ? mockNotifyAgent(preferredAgentId, ctx.agents) : undefined;
+      return { status: "saved", lead_id: id, name: str(input.name) || "(no name)", mobile, preferred_agent: preferredAgentName || undefined, agent_notified: addNotified };
     }
     if (name === "update_lead") {
       const leadNumber = Number(input.lead_number);
@@ -207,14 +210,17 @@ function executeTool(name, input, ctx) {
       if (!field) return { status: "error", message: "field must be one of: name, mobile, area, agent." };
       let value = str(input.value);
       let displayValue = value;
+      let assignedAgentId = "";
       if (field === "leadMobile") value = displayValue = toCanonicalMalaysiaPhone(value);
       if (field === "preferredAgentName") {
         const resolved = resolveAgent(value, ctx.agents);
         if (!resolved.ok) return { status: "error", message: resolved.message };
         value = displayValue = resolved.name;
+        assignedAgentId = resolved.id;
       }
       lead[field] = value;
-      return { status: "saved", lead: lead.leadName, field: str(input.field), value: displayValue };
+      const updNotified = assignedAgentId ? mockNotifyAgent(assignedAgentId, ctx.agents) : undefined;
+      return { status: "saved", lead: lead.leadName, field: str(input.field), value: displayValue, agent_notified: updNotified };
     }
     return { status: "error", message: `Unknown tool ${name}.` };
   } catch (error) {
@@ -309,7 +315,20 @@ async function runTurn(ctx, history, userText, trace) {
 function leadsFrom(arr) {
   return arr.map((l, i) => ({ id: i + 1, status: "Pending", leadState: "", preferredAgentName: "", ...l }));
 }
-const AGENTS = [{ id: "1", name: "Zhi Hong" }, { id: "2", name: "Ah Meng" }];
+// contact mirrors user.contact in prod; Ah Meng has none to test the sent=false path.
+const AGENTS = [
+  { id: "1", name: "Zhi Hong", contact: "0181234567" },
+  { id: "2", name: "Ah Meng", contact: "" },
+];
+
+// Mock of notifyPreferredAgentOfLead — looks up the agent's contact, normalizes to
+// 60-form, and "sends". Returns the same shape as prod so the trace matches.
+function mockNotifyAgent(agentId, agents) {
+  const a = agents.find((x) => x.id === agentId);
+  const phone = toCanonicalMalaysiaPhone(a?.contact || "");
+  if (phone.length < 8) return { sent: false, agentPhone: phone, reason: "agent has no valid contact number on file" };
+  return { sent: true, agentPhone: phone };
+}
 
 const SCENARIOS = {
   S1: { desc: "Update lead referenced by LOCAL phone (list shows 60 form)",
@@ -364,6 +383,14 @@ const SCENARIOS = {
     referrer: { name: "Boss", phone: "60123334444", registered: true, bankAccount: "x" },
     leads: [],
     turns: ["add 0123334444 Kumar", "no preferred agent, skip"] },
+  S14: { desc: "Assign agent with NO contact on file -> agent_notified sent=false",
+    referrer: { name: "Boss", phone: "60123334444", registered: true, bankAccount: "x" },
+    leads: [],
+    turns: ["add 0123334444 Kumar", "assign to Ah Meng"] },
+  S15: { desc: "Direct 'pass to' on add -> notify in one shot",
+    referrer: { name: "Boss", phone: "60123334444", registered: true, bankAccount: "x" },
+    leads: [],
+    turns: ["0182220099 Kumar pass to Zhi Hong"] },
 };
 
 async function runScenario(key) {
