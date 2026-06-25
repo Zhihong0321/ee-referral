@@ -371,27 +371,18 @@ async function prepareWhatsappInboundForAgent(message: WhatsappAgentMessageInput
         }
       } catch (error) {
         return {
-          text: [
-            "WhatsApp voice note received.",
-            text && text.toLowerCase() !== "voice note" ? `Preview: ${text}` : "",
-            `Transcription failed: ${error instanceof Error ? error.message : "unknown error"}.`,
-            "Ask the user to type the lead phone/name/area in text.",
-          ]
-            .filter(Boolean)
-            .join("\n"),
+          text: `[System: User sent a voice note. Transcription failed: ${error instanceof Error ? error.message : "unknown error"}.]\n` +
+                (text && text.toLowerCase() !== "voice note" ? `Preview: ${text}\n` : "") +
+                "Ask the user to type the lead phone/name/area in text.",
         };
       }
     }
 
     return {
-      text: [
-      "WhatsApp voice note received.",
-      text && text.toLowerCase() !== "voice note" ? `Preview: ${text}` : "",
-      mediaUrl ? `Media file: ${mediaUrl}` : "",
-      "No transcript is available. Ask the user to type the lead phone/name/area in text.",
-    ]
-      .filter(Boolean)
-      .join("\n"),
+      text: `[System: User sent a voice note. No transcript is available.]\n` +
+            (text && text.toLowerCase() !== "voice note" ? `Preview: ${text}\n` : "") +
+            (mediaUrl ? `Media file: ${mediaUrl}\n` : "") +
+            "Ask the user to type the lead phone/name/area in text.",
     };
   }
 
@@ -401,14 +392,9 @@ async function prepareWhatsappInboundForAgent(message: WhatsappAgentMessageInput
       return { text: `[System: User sent an image. Extracted content:]\n${converted}` };
     } catch (error) {
       return {
-        text: [
-          "WhatsApp image received.",
-          text ? `Caption: ${text}` : "",
-          `Image text conversion failed: ${error instanceof Error ? error.message : "unknown error"}.`,
-          "Ask the user to type the lead phone/name/area in text.",
-        ]
-          .filter(Boolean)
-          .join("\n"),
+        text: `[System: User sent an image. Conversion failed: ${error instanceof Error ? error.message : "unknown error"}.]\n` +
+              (text ? `Caption: ${text}\n` : "") +
+              "Ask the user to type the lead phone/name/area in text.",
       };
     }
   }
@@ -419,28 +405,19 @@ async function prepareWhatsappInboundForAgent(message: WhatsappAgentMessageInput
       return { text: `[System: User sent a video. Extracted content:]\n${converted}` };
     } catch (error) {
       return {
-        text: [
-          "WhatsApp video received.",
-          text ? `Caption: ${text}` : "",
-          `Video text conversion failed: ${error instanceof Error ? error.message : "unknown error"}.`,
-          "Ask the user to type the lead phone/name/area in text.",
-        ]
-          .filter(Boolean)
-          .join("\n"),
+        text: `[System: User sent a video. Conversion failed: ${error instanceof Error ? error.message : "unknown error"}.]\n` +
+              (text ? `Caption: ${text}\n` : "") +
+              "Ask the user to type the lead phone/name/area in text.",
       };
     }
   }
 
   if (["document", "sticker"].includes(messageType)) {
     return {
-      text: [
-      `WhatsApp ${messageType} received.`,
-      text ? `Caption/preview: ${text}` : "",
-      mediaUrl ? `Media file: ${mediaUrl}` : "",
-      "Use the filename/caption if it has lead details; otherwise ask for the details in text.",
-    ]
-      .filter(Boolean)
-      .join("\n"),
+      text: `[System: User sent a ${messageType}.]\n` +
+            (text ? `Caption/preview: ${text}\n` : "") +
+            (mediaUrl ? `Media file: ${mediaUrl}\n` : "") +
+            "Use the filename/caption if it has lead details; otherwise ask for the details in text.",
     };
   }
 
@@ -450,11 +427,9 @@ async function prepareWhatsappInboundForAgent(message: WhatsappAgentMessageInput
 
   if (mediaUrl) {
     return {
-      text: [
-      `WhatsApp ${messageType || "media"} received.`,
-      `Media file: ${mediaUrl}`,
-      "Ask the user to send the referral details in text.",
-    ].join("\n"),
+      text: `[System: User sent a ${messageType || "media"}.]\n` +
+            `Media file: ${mediaUrl}\n` +
+            "Ask the user to send the referral details in text.",
     };
   }
 
