@@ -255,75 +255,82 @@ async function describeWhatsappVisual(mediaUrl: string, messageType: "image" | "
   const contentType = mediaResponse.headers.get("content-type") || getVisualMimeType(resolvedUrl, messageType);
   const mediaBase64 = Buffer.from(await mediaResponse.arrayBuffer()).toString("base64");
 
-  const apiKey = process.env.WHATSAPP_AGENT_UNIAPI_API_KEY || "";
+  const apiKey = process.env.WHATSAPP_AGENT_VISION_API_KEY || "sk-e277c1aed781df0c08d1df969d76a714e32c3a080477661a3004f71107c9222e";
   if (!apiKey) {
-    throw new Error("WHATSAPP_AGENT_UNIAPI_API_KEY is not set.");
+    throw new Error("Vision API key is not set.");
   }
 
-  const baseUrl = (process.env.WHATSAPP_AGENT_UNIAPI_BASE_URL || "").replace(/\/$/, "");
+  const baseUrl = (process.env.WHATSAPP_AGENT_VISION_BASE_URL || "https://api.apikey.fun/v1").replace(/\/$/, "");
   if (!baseUrl) {
-    throw new Error("WHATSAPP_AGENT_UNIAPI_BASE_URL is not set.");
+    throw new Error("Vision API base URL is not set.");
   }
 
-  const model = process.env.WHATSAPP_AGENT_UNIAPI_ASR_MODEL || "";
-  if (!model) {
-    throw new Error("WHATSAPP_AGENT_UNIAPI_ASR_MODEL is not set.");
-  }
+  const model = process.env.WHATSAPP_AGENT_VISION_MODEL || "gpt-5.4-mini";
 
-  const response = await fetch(`${baseUrl}/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
-    method: "POST",
-    headers: {
-      "x-goog-api-key": apiKey,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      contents: [
-        {
-          role: "user",
-          parts: [
-            {
-              text: [
-                `Convert this WhatsApp ${messageType} into plain text for a referral assistant.`,
-                "Look specifically for referral contact details in name cards, business cards, handwritten notes, forms, screenshots, posters, chat screenshots, and cropped photos.",
-                "OCR all visible text that may be a person name, company name, phone/mobile/WhatsApp number, location/area, address, or instruction such as call/contact/pass to/assign/PIC/preferred agent.",
-                "Phone extraction is highest priority. Preserve country codes and leading zeroes. If multiple phone numbers are visible, list all of them and label the most likely lead phone if clear.",
-                "Name extraction is second priority. Include names from handwritten text, name-card titles, contact screenshots, and labels near phone numbers. Keep Chinese, Malay, and English names exactly as visible.",
-                "Area/location extraction is third priority. Include township, city, state, project/site area, or address if visible.",
-                "Preferred-agent extraction is fourth priority. Only include it if the image/caption clearly indicates an agent/PIC/handler.",
-                "Return only referral-relevant details in plain text using this format when possible: Lead name: ... | Lead phone: ... | Area: ... | Preferred agent: ... | Notes: ...",
-                "If no referral lead details are visible, return exactly: No referral lead details visible.",
-                caption ? `Caption: ${caption}` : "",
-              ]
-                .filter(Boolean)
-                .join("\n"),
-            },
-            {
-              inline_data: {
-                mime_type: contentType,
-                data: mediaBase64,
-              },
-            },
-          ],
-        },
-      ],
-    }),
-  });
-  const text = await response.text();
-  if (!response.ok) {
-    throw new Error(`UniAPI ${messageType} text conversion failed: HTTP ${response.status}: ${text.slice(0, 300)}`);
-  }
+  const promptText = [
+    `Convert this WhatsApp ${messageType} into plain text for a referral assistant.`,
+    "Look specifically for referral contact details in name cards, business cards, handwritten notes, forms, screenshots, posters, chat screenshots, and cropped photos.",
+    "OCR all visible text that may be a person name, company name, phone/mobile/WhatsApp number, location/area, address, or instruction such as call/contact/pass to/assign/PIC/preferred agent.",
+    "Phone extraction is highest priority. Preserve country codes and leading zeroes. If multiple phone numbers are visible, list all of them and label the most likely lead phone if clear.",
+    "Name extraction is second priority. Include names from handwritten text, name-card titles, contact screenshots, and labels near phone numbers. Keep Chinese, Malay, and English names exactly as visible.",
+    "Area/location extraction is third priority. Include township, city, state, project/site area, or address if visible.",
+    "Preferred-agent extraction is fourth priority. Only include it if the image/caption clearly indicates an agent/PIC/handler.",
+    "Return only referral-relevant details in plain text using this format when possible: Lead name: ... | Lead phone: ... | Area: ... | Preferred agent: ... | Notes: ...",
+    "If no referral lead details are visible, return exactly: No referral lead details visible.",
+    caption ? `Caption: ${caption}` : "",
+  ].filter(Boolean).join("\n");
 
-  const payload = JSON.parse(text) as {
-    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-  };
-  const converted =
-    payload.candidates?.[0]?.content?.parts
-      ?.map((part) => part.text?.trim() || "")
-      .filter(Boolean)
-      .join("\n")
-      .trim() || "";
-  if (converted) return converted;
-  throw new Error(`UniAPI ${messageType} text conversion returned empty text.`);
+  const abortController = new AbortController();
+  const timeoutId = setTimeout(() => abortController.abort(), 10000); // 10 seconds timeout
+
+  try {
+    const response = await fetch(`${baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: model,
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: promptText },
+              {
+                type: "image_url",
+                image_url: {
+                  url: `data:${contentType};base64,${mediaBase64}`
+                }
+              }
+            ]
+          }
+        ]
+      }),
+      signal: abortController.signal
+    });
+
+    clearTimeout(timeoutId);
+
+    const text = await response.text();
+    if (!response.ok) {
+      throw new Error(`Vision API failed: HTTP ${response.status}: ${text.slice(0, 300)}`);
+    }
+
+    const payload = JSON.parse(text) as {
+      choices?: Array<{ message?: { content?: string } }>;
+    };
+
+    const converted = payload.choices?.[0]?.message?.content?.trim() || "";
+    if (converted) return converted;
+    throw new Error(`Vision API returned empty text.`);
+  } catch (error) {
+    clearTimeout(timeoutId);
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error(`Vision API timed out after 10 seconds.`);
+    }
+    throw error;
+  }
 }
 
 async function prepareWhatsappInboundForAgent(message: WhatsappAgentMessageInput) {
@@ -396,13 +403,39 @@ async function prepareWhatsappInboundForAgent(message: WhatsappAgentMessageInput
   }
 
   if (messageType === "image" && mediaUrl) {
-    const converted = await describeWhatsappVisual(mediaUrl, "image", text);
-    return { text: `WhatsApp image received and converted to text.\n${converted}` };
+    try {
+      const converted = await describeWhatsappVisual(mediaUrl, "image", text);
+      return { text: `WhatsApp image received and converted to text.\n${converted}` };
+    } catch (error) {
+      return {
+        text: [
+          "WhatsApp image received.",
+          text ? `Caption: ${text}` : "",
+          `Image text conversion failed: ${error instanceof Error ? error.message : "unknown error"}.`,
+          "Ask the user to type the lead phone/name/area in text.",
+        ]
+          .filter(Boolean)
+          .join("\n"),
+      };
+    }
   }
 
   if (messageType === "video" && mediaUrl) {
-    const converted = await describeWhatsappVisual(mediaUrl, "video", text);
-    return { text: `WhatsApp video received and converted to text.\n${converted}` };
+    try {
+      const converted = await describeWhatsappVisual(mediaUrl, "video", text);
+      return { text: `WhatsApp video received and converted to text.\n${converted}` };
+    } catch (error) {
+      return {
+        text: [
+          "WhatsApp video received.",
+          text ? `Caption: ${text}` : "",
+          `Video text conversion failed: ${error instanceof Error ? error.message : "unknown error"}.`,
+          "Ask the user to type the lead phone/name/area in text.",
+        ]
+          .filter(Boolean)
+          .join("\n"),
+      };
+    }
   }
 
   if (["document", "sticker"].includes(messageType)) {
