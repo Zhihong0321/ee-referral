@@ -461,7 +461,8 @@ export async function processWhatsappAgentMessages(
 
       const agentInput = await prepareWhatsappInboundForAgent(message);
       const agentText = agentInput.text;
-      const reply = await runWhatsappAgentTurn({ senderPhone, text: agentText });
+      const agentResult = await runWhatsappAgentTurn({ senderPhone, text: agentText });
+      const reply = agentResult.reply;
 
       let sendResult: unknown = null;
       if (!dryRun) {
@@ -491,9 +492,16 @@ export async function processWhatsappAgentMessages(
           channelSessionId: channelSession.id,
         });
 
+        let memoryText = reply;
+        if (agentResult.toolTrace && agentResult.toolTrace.length > 0) {
+          const toolsDesc = agentResult.toolTrace.map(t => `${t.name}(${JSON.stringify(t.input)}) -> status:${t.status}`).join(", ");
+          memoryText = `[System Note: Executed tools: ${toolsDesc}]\n${reply}`;
+        }
+
+        const now = new Date().toISOString();
         await appendConversation(senderPhone, [
-          { role: "user", text: agentText },
-          { role: "assistant", text: reply },
+          { role: "user", text: agentText, time: now },
+          { role: "assistant", text: memoryText, time: now },
         ]);
       }
 
