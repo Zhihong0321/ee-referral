@@ -36,12 +36,18 @@ export function normalizeComparableText(value: string) {
 export function matchAgentName<T extends { name: string }>(rawText: string, agents: T[]) {
   const query = normalizeComparableText(rawText);
   if (!query) return { status: "missing" as const, matches: [] as T[] };
+  const compactQuery = query.replace(/\s+/g, "");
 
   const scored = agents
     .map((agent) => {
       const name = normalizeComparableText(agent.name);
+      const compactName = name.replace(/\s+/g, "");
       const exact = name === query;
-      const contained = query.includes(name) || name.includes(query);
+      const contained =
+        query.includes(name) ||
+        name.includes(query) ||
+        compactQuery.includes(compactName) ||
+        compactName.includes(compactQuery);
       const tokenMatches = query.split(" ").filter(Boolean).filter((token) => name.split(" ").includes(token)).length;
       return { agent, score: exact ? 100 : contained ? 80 : tokenMatches };
     })

@@ -77,12 +77,14 @@ test("extracts preferred-agent language", () => {
 });
 
 test("matches a short agent name to the configured full name", () => {
-  const result = matchAgentName("Zhi Hong", [
-    { id: "1", name: "GAN ZHI HONG" },
-    { id: "2", name: "GAN LAI HOCK" },
-  ]);
-  assert.equal(result.status, "matched");
-  assert.equal(result.matches[0]?.name, "GAN ZHI HONG");
+  for (const input of ["Zhi Hong", "Zhihong", "Zhi-Hong"]) {
+    const result = matchAgentName(input, [
+      { id: "1", name: "GAN ZHI HONG" },
+      { id: "2", name: "GAN LAI HOCK" },
+    ]);
+    assert.equal(result.status, "matched", input);
+    assert.equal(result.matches[0]?.name, "GAN ZHI HONG", input);
+  }
 });
 
 test("recognizes skip and cancellation messages", () => {
