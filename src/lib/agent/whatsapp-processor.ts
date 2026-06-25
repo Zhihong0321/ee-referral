@@ -373,7 +373,7 @@ async function prepareWhatsappInboundForAgent(message: WhatsappAgentMessageInput
         return {
           text: `[System: User sent a voice note. Transcription failed: ${error instanceof Error ? error.message : "unknown error"}.]\n` +
                 (text && text.toLowerCase() !== "voice note" ? `Preview: ${text}\n` : "") +
-                "Ask the user to type the lead phone/name/area in text.",
+                "Instruct the AI Agent to reply exactly with: '( Voice note failed to read ), can you write in text?'",
         };
       }
     }
@@ -382,7 +382,7 @@ async function prepareWhatsappInboundForAgent(message: WhatsappAgentMessageInput
       text: `[System: User sent a voice note. No transcript is available.]\n` +
             (text && text.toLowerCase() !== "voice note" ? `Preview: ${text}\n` : "") +
             (mediaUrl ? `Media file: ${mediaUrl}\n` : "") +
-            "Ask the user to type the lead phone/name/area in text.",
+            "Instruct the AI Agent to reply exactly with: '( Voice note failed to read ), can you write in text?'",
     };
   }
 
@@ -394,7 +394,7 @@ async function prepareWhatsappInboundForAgent(message: WhatsappAgentMessageInput
       return {
         text: `[System: User sent an image. Conversion failed: ${error instanceof Error ? error.message : "unknown error"}.]\n` +
               (text ? `Caption: ${text}\n` : "") +
-              "Ask the user to type the lead phone/name/area in text.",
+              "Instruct the AI Agent to reply exactly with: '( Image failed to read ), can you write in text?'",
       };
     }
   }
@@ -407,7 +407,7 @@ async function prepareWhatsappInboundForAgent(message: WhatsappAgentMessageInput
       return {
         text: `[System: User sent a video. Conversion failed: ${error instanceof Error ? error.message : "unknown error"}.]\n` +
               (text ? `Caption: ${text}\n` : "") +
-              "Ask the user to type the lead phone/name/area in text.",
+              "Instruct the AI Agent to reply exactly with: '( Video failed to read ), can you write in text?'",
       };
     }
   }
