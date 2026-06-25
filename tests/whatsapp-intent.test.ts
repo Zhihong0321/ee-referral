@@ -25,6 +25,14 @@ test("parses referral details extracted from an image", () => {
   );
 });
 
+test("ignores OCR placeholders for a missing preferred agent", () => {
+  const parsed = parseLeadCandidate(
+    "[System: User sent an image. Extracted content:]\nLead name: Iconbag KL | Lead phone: 018-963 8220 | Area: Sungai Besi | Preferred agent: None visible | Notes: manufacturer",
+  );
+  assert.equal(parsed?.preferredAgentText, "");
+  assert.equal(parsed?.leadMobileNumber, "018-963 8220");
+});
+
 test("parses an explicit text lead without requiring an AI decision", () => {
   const parsed = parseLeadCandidate("please add 0123334444 name Kumar from Ipoh");
   assert.equal(parsed?.leadMobileNumber, "0123334444");

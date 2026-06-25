@@ -21,6 +21,11 @@ function labeledValue(text: string, label: string) {
   return cleanValue(match?.[1] || "");
 }
 
+function optionalLabeledValue(text: string, label: string) {
+  const value = labeledValue(text, label);
+  return /^(?:none|none visible|not visible|not provided|unknown|n\/a|null|-)?$/i.test(value) ? "" : value;
+}
+
 export function normalizeComparableText(value: string) {
   return value
     .toLowerCase()
@@ -98,7 +103,7 @@ export function parseLeadCandidate(text: string): ParsedLeadCandidate | null {
       leadName: labeledValue(text, "Lead name"),
       leadMobileNumber: phone,
       area: labeledValue(text, "Area"),
-      preferredAgentText: labeledValue(text, "Preferred agent"),
+      preferredAgentText: optionalLabeledValue(text, "Preferred agent"),
       source: "structured_media",
     };
   }
