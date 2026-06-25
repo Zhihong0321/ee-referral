@@ -281,7 +281,7 @@ async function describeWhatsappVisual(mediaUrl: string, messageType: "image" | "
   ].filter(Boolean).join("\n");
 
   const abortController = new AbortController();
-  const timeoutId = setTimeout(() => abortController.abort(), 10000); // 10 seconds timeout
+  const timeoutId = setTimeout(() => abortController.abort(), 60000); // 60 seconds timeout
 
   try {
     const response = await fetch(`${baseUrl}/chat/completions`, {
@@ -327,7 +327,7 @@ async function describeWhatsappVisual(mediaUrl: string, messageType: "image" | "
   } catch (error) {
     clearTimeout(timeoutId);
     if (error instanceof Error && error.name === "AbortError") {
-      throw new Error(`Vision API timed out after 10 seconds.`);
+      throw new Error(`Vision API timed out after 60 seconds.`);
     }
     throw error;
   }
