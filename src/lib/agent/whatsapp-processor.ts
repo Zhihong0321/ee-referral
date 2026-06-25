@@ -367,15 +367,7 @@ async function prepareWhatsappInboundForAgent(message: WhatsappAgentMessageInput
       try {
         const transcript = await transcribeWhatsappAudio(mediaUrl);
         if (transcript) {
-          return {
-            text: [
-              "WhatsApp voice note received and transcribed.",
-              `Transcript: ${transcript}`,
-              text && text.toLowerCase() !== "voice note" ? `Preview: ${text}` : "",
-            ]
-              .filter(Boolean)
-              .join("\n"),
-          };
+          return { text: `[System: User sent a voice note. Transcript:]\n${transcript}` };
         }
       } catch (error) {
         return {
@@ -406,7 +398,7 @@ async function prepareWhatsappInboundForAgent(message: WhatsappAgentMessageInput
   if (messageType === "image" && mediaUrl) {
     try {
       const converted = await describeWhatsappVisual(mediaUrl, "image", text);
-      return { text: `WhatsApp image received and converted to text.\n${converted}` };
+      return { text: `[System: User sent an image. Extracted content:]\n${converted}` };
     } catch (error) {
       return {
         text: [
@@ -424,7 +416,7 @@ async function prepareWhatsappInboundForAgent(message: WhatsappAgentMessageInput
   if (messageType === "video" && mediaUrl) {
     try {
       const converted = await describeWhatsappVisual(mediaUrl, "video", text);
-      return { text: `WhatsApp video received and converted to text.\n${converted}` };
+      return { text: `[System: User sent a video. Extracted content:]\n${converted}` };
     } catch (error) {
       return {
         text: [
