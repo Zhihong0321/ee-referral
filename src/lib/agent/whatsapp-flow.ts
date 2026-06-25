@@ -14,6 +14,7 @@
 import { toCanonicalMalaysiaPhone } from "@/lib/phone-normalization";
 import { COMPANY_LEGAL_NAME, REFERRAL_TERMS } from "@/lib/terms";
 import {
+  appendAgentDebugLog,
   createWhatsappReferral,
   listWhatsappAgents,
   listWhatsappReferrals,
@@ -38,7 +39,21 @@ const LLM_BASE_URL = (process.env.WHATSAPP_AGENT_LLM_BASE_URL || "https://api.mi
 const LLM_MODEL = process.env.WHATSAPP_AGENT_LLM_MODEL || "MiniMax-M3";
 const LLM_API_KEY =
   process.env.WHATSAPP_AGENT_LLM_API_KEY || process.env.MINIMAX_API_KEY || "";
-const MAX_TOOL_ROUNDS = 5;
+const MAX_TOOL_ROUNDS = 6;
+
+// Anti-phantom-save guard: MiniMax sometimes narrates "Done! Added X" without
+// actually calling the tool. We detect a save-claim with no write this turn,
+// nudge the model to really call the tool (up to N times), and if it still
+// won't, send an honest fallback instead of a false confirmation.
+const MAX_PHANTOM_GUARDS = 2;
+const WRITE_TOOL_NAMES = new Set(["add_lead", "update_lead", "save_referrer_profile"]);
+// "I saved/added/updated/registered it" claim markers (EN / MS / ZH).
+const SAVE_CLAIM_REGEX =
+  /\b(done|added|saved|updated|registered|all set)\b|dah (tambah|simpan|set|daftar)|sudah (tambah|simpan|daftar)|ditambah|disimpan|berjaya (tambah|simpan|daftar)|已(添加|保存|更新|注册|登记)|添加成功|已经?(加|保存|更新)|搞定|完成了|加好了|已加入/i;
+const PHANTOM_NUDGE =
+  "SYSTEM CHECK: Your previous reply implied a lead was added/updated/saved or the account was registered, but you did NOT call any tool — so NOTHING was actually saved. If you intended to make that change, call the correct tool NOW with the right arguments. If no change was intended, resend your reply WITHOUT claiming anything was saved.";
+const PHANTOM_FALLBACK =
+  "Sorry, I couldn't save that just now. Could you resend the lead's phone number so I can add it properly?";
 
 type ToolResultContentBlock = { type: "tool_result"; tool_use_id: string; content: string };
 type ResponseContentBlock =
@@ -127,9 +142,13 @@ function buildSystemPrompt(
     "",
     "ADDING A LEAD — keep it minimal. You only NEED the lead's contact number. Also try to capture the lead's NAME and AREA (town/city). If the user doesn't know or says skip, proceed without them — never block on it. NEVER ask for full address, relationship, or project type. The moment you have a contact number, you may add the lead; ask for name/area in the same friendly flow but don't nag.",
     "",
+    "MALAYSIAN PHONE NUMBERS — every referrer and lead is Malaysian. A number written with a leading 0 (e.g. 0129999999) is the SAME number as its 60 country-code form (60129999999) — they differ ONLY by the country code. THEIR LEADS below are shown in 60-form; when the user refers to a lead by a local 0-form number, match it to the 60-form lead in the list and act on it. NEVER treat the 01X and 60X versions of the same digits as two different numbers, and never ask 'which lead' when a local number clearly matches a listed lead.",
+    "",
     "WHATSAPP NON-TEXT INPUT — non-text WhatsApp messages are converted to plain text before you see them. Contact cards become name/phone text. Voice notes become transcripts. Images/videos may become OCR/contact extraction text from name cards, handwritten notes, screenshots, or visible labels. Use that text like a normal user message. If it contains a lead phone number, proceed from that. If it does not contain enough lead details, ask for the missing lead phone/name/area in text.",
     "",
     "PREFERRED AGENT — phrases like 'pass to X', 'assign to X', 'let X handle', 'give to X', 'PIC X', or 'preferred agent X' mean X is the AGENT (a salesperson from the AVAILABLE AGENTS list) who should handle this lead. X is NEVER the lead's name. Pass X as add_lead's preferred_agent (or update_lead field 'agent'). Match X to an AVAILABLE AGENT; if there's no match, tell the user who is available and don't guess. Never put an agent's name into the lead's name field.",
+    "",
+    "ASK PREFERRED AGENT ON EVERY NEW LEAD — every time you successfully add a NEW lead, if no preferred agent was already set for it, you MUST ask the referrer whether they have a preferred agent to handle this lead. Invite them to give a name and SHOW the available agents from the AVAILABLE AGENTS list. Example: 'Done! Added Kumar (60123334444). Do you have a preferred agent to handle this lead? Available: [list the agents] — or reply skip.' If they name one, set it on that lead with update_lead field 'agent'. If they reply no/skip, leave it unassigned and move on. If a preferred agent was already provided when adding, just confirm it instead of asking. If no agents are configured, skip this question.",
     "",
     "ONBOARDING — if 'Registered' below is NO, the referrer's account is not set up yet. You MUST NOT call add_lead or update_lead until they are registered. This step is important, so be clear and descriptive — not casual or jokey. Your FIRST onboarding message must explain, professionally:",
     "  • that before they can submit referrals, you need to properly set up their Referral Account;",
@@ -140,8 +159,8 @@ function buildSystemPrompt(
     "TOOLS — use add_lead / update_lead / save_referrer_profile to actually make changes. Never claim something was saved unless the tool result confirms it. After a tool succeeds, confirm naturally and briefly.",
     "",
     "EXAMPLES:",
-    'User: "call 0182299229 ah guan" → call add_lead(mobile="0182299229", name="ah guan"). Then: "Done! Added ah guan (60182299229). Anyone else?"',
-    'User: "add lead 0123456789" (no name) → call add_lead(mobile="0123456789"). Then: "Got it, saved 60123456789. What\'s their name, or reply skip."',
+    'User: "call 0182299229 ah guan" → call add_lead(mobile="0182299229", name="ah guan"). Then: "Done! Added ah guan (60182299229). Do you have a preferred agent to handle this lead? Available: [list agents] — or reply skip."',
+    'User: "add lead 0123456789" (no name) → call add_lead(mobile="0123456789"). Then: "Got it, saved 60123456789. Do you have a preferred agent for this lead? Available: [list agents] — or reply skip."',
     'User: "how many leads do I have?" → answer from the list in context, e.g. "You have 2 leads: ..."',
     'User: "change lead 1 name to Ali" → call update_lead(lead_number=1, field="name", value="Ali").',
     'User: "0182220099 pass to Zhi Hong" → call add_lead(mobile="0182220099", preferred_agent="Zhi Hong"). Do NOT set name="Zhi Hong". Then: "Done! Added 60182220099, to be handled by Zhi Hong."',
@@ -368,24 +387,74 @@ export async function runWhatsappAgentTurn(input: { senderPhone: string; text: s
   const ctx: ToolContext = { senderPhone: input.senderPhone, referrer, leads, agents };
   const messages = toCleanMessages(history, message);
 
+  const startedAt = Date.now();
+  const toolTrace: Array<{ name: string; input: Record<string, unknown>; status: string }> = [];
+  let wroteThisTurn = false; // a write tool actually returned status:"saved" this turn
+  let guardTrips = 0; // anti-phantom nudges used this turn
+  let fallbackUsed = false;
+  let rounds = 0;
+  let finalReply = "Sorry, I got a bit stuck there. Could you try again?";
+
   for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
+    rounds = round + 1;
     const { content, stopReason } = await callModel(buildSystemPrompt(ctx.referrer, ctx.leads, ctx.agents), messages);
     messages.push({ role: "assistant", content });
 
     const toolUses = content.filter((block): block is Extract<ResponseContentBlock, { type: "tool_use" }> => block.type === "tool_use");
 
     if (stopReason !== "tool_use" || toolUses.length === 0) {
-      const reply = extractText(content);
-      return reply || "Sorry, I didn't catch that — could you say it again?";
+      const reply = extractText(content) || "Sorry, I didn't catch that — could you say it again?";
+      // ANTI-PHANTOM GUARD: model claims a save but no write tool fired this turn.
+      if (!wroteThisTurn && SAVE_CLAIM_REGEX.test(reply)) {
+        if (guardTrips < MAX_PHANTOM_GUARDS) {
+          guardTrips += 1;
+          messages.push({ role: "user", content: PHANTOM_NUDGE });
+          continue;
+        }
+        // Exhausted: never send a false success — fall back to an honest reply.
+        fallbackUsed = true;
+        finalReply = PHANTOM_FALLBACK;
+        break;
+      }
+      finalReply = reply;
+      break;
     }
 
     const toolResults: ToolResultContentBlock[] = [];
     for (const toolUse of toolUses) {
       const result = await executeTool(toolUse.name, toolUse.input, ctx);
+      let status = "";
+      try {
+        status = String((JSON.parse(result) as { status?: unknown }).status ?? "");
+      } catch {
+        status = "";
+      }
+      if (WRITE_TOOL_NAMES.has(toolUse.name) && status === "saved") wroteThisTurn = true;
+      toolTrace.push({ name: toolUse.name, input: toolUse.input, status });
       toolResults.push({ type: "tool_result", tool_use_id: toolUse.id, content: result });
     }
     messages.push({ role: "user", content: toolResults });
   }
 
-  return "Sorry, I got a bit stuck there. Could you try again?";
+  // Observability ("EYE in prod"): record the turn's reasoning trace. Best-effort
+  // — logging must never break the reply.
+  try {
+    await appendAgentDebugLog({
+      at: new Date().toISOString(),
+      phone: input.senderPhone,
+      registered: ctx.referrer.registered,
+      inbound: message.slice(0, 500),
+      reply: finalReply.slice(0, 800),
+      toolCalls: toolTrace,
+      wrote: wroteThisTurn,
+      guardTrips,
+      fallbackUsed,
+      rounds,
+      ms: Date.now() - startedAt,
+    });
+  } catch {
+    // ignore logging failures
+  }
+
+  return finalReply;
 }

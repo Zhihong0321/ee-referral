@@ -312,6 +312,63 @@ export async function appendConversation(senderPhone: string, newTurns: Conversa
   );
 }
 
+// ---- Agent debug log (prod observability) ------------------------------------
+// A global ring buffer of recent agent turns, stored in
+// et_channel_sessions.metadata.agentDebugLog. Lets us inspect the agent's
+// reasoning in prod (did the tool fire? did the phantom-guard trip?) via
+// GET /api/whatsapp-agent/logs — no new table, reuses the proven metadata store.
+export type AgentDebugLogEntry = {
+  at: string;
+  phone: string;
+  registered: boolean;
+  inbound: string;
+  reply: string;
+  toolCalls: Array<{ name: string; input: unknown; status: string }>;
+  wrote: boolean;
+  guardTrips: number;
+  fallbackUsed: boolean;
+  rounds: number;
+  ms: number;
+};
+
+const MAX_AGENT_DEBUG_ENTRIES = 80;
+
+export async function appendAgentDebugLog(entry: AgentDebugLogEntry) {
+  const config = getAgentConfig();
+  const session = await ensureChannelSession();
+  const metadata = (session.metadata || {}) as Record<string, unknown>;
+  const existing = Array.isArray(metadata.agentDebugLog) ? (metadata.agentDebugLog as AgentDebugLogEntry[]) : [];
+  const combined = [...existing, entry].slice(-MAX_AGENT_DEBUG_ENTRIES);
+
+  await runWhatsappAgentSql(
+    `
+      UPDATE et_channel_sessions
+      SET
+        metadata = jsonb_set(
+          COALESCE(metadata, '{}'::jsonb),
+          ARRAY['agentDebugLog'],
+          $3::jsonb,
+          true
+        ),
+        updated_at = NOW()
+      WHERE tenant_id = $1
+        AND channel_type = 'whatsapp'
+        AND session_identifier = $2
+    `,
+    [config.tenantId, config.sessionId, JSON.stringify(combined)],
+  );
+}
+
+export async function loadAgentDebugLog(limit = 30, phone?: string): Promise<AgentDebugLogEntry[]> {
+  const session = await ensureChannelSession();
+  const metadata = (session.metadata || {}) as Record<string, unknown>;
+  const entries = Array.isArray(metadata.agentDebugLog) ? (metadata.agentDebugLog as AgentDebugLogEntry[]) : [];
+  const filtered = phone
+    ? entries.filter((e) => toCanonicalMalaysiaPhone(e.phone) === toCanonicalMalaysiaPhone(phone))
+    : entries;
+  return filtered.slice(-Math.max(1, Math.min(limit, MAX_AGENT_DEBUG_ENTRIES))).reverse();
+}
+
 export type WhatsappAgentOption = { id: string; name: string };
 
 // Sales agents who can be set as a lead's preferred agent. Mirrors the portal's
