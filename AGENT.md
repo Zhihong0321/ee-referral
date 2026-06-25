@@ -1,48 +1,46 @@
 # AGENT.md — WhatsApp Referral Assistant
 
-The WhatsApp agent is a MiniMax-M3 tool-calling agent (NOT a state machine).
-Prompt + tools + loop live in [`src/lib/agent/whatsapp-flow.ts`](src/lib/agent/whatsapp-flow.ts);
-the DB layer is [`src/lib/agent/whatsapp-data.ts`](src/lib/agent/whatsapp-data.ts).
-Deployed on Railway at **https://referral.atap.solar**. See [CLAUDE.md](CLAUDE.md)
-for the fuller project guide.
+The assistant uses a hybrid architecture:
 
-## Debug tools built into prod
+1. WhatsApp media is converted into structured text.
+2. Deterministic application workflow handles every database-changing action:
+   onboarding, lead creation, duplicate detection, preferred-agent assignment,
+   cancellation, and explicit numbered updates.
+3. The language model is read-only. It handles program questions, lead-list
+   questions, and conversational clarification, but cannot perform or claim writes.
 
-### 1. Prod "EYE" — `GET /api/whatsapp-agent/logs`
-Last ~80 agent turns (ring buffer in `et_channel_sessions.metadata.agentDebugLog`),
-open endpoint. Each turn records `inbound`, `reply`,
-`toolCalls[{name,input,status}]`, `wrote`, `guardTrips`, `fallbackUsed`,
-`rounds`, `ms`, `registered`. Filters: `?phone=`, `?limit=` (max 80).
-**This is the first stop when a lead "doesn't save"** — it shows whether the
-write tool fired (`wrote`) and whether the anti-phantom guard tripped
-(`guardTrips`/`fallbackUsed`).
+Core files:
+
+- `src/lib/agent/whatsapp-intent.ts` — pure parsing and matching
+- `src/lib/agent/whatsapp-workflow.ts` — deterministic workflow and writes
+- `src/lib/agent/whatsapp-flow.ts` — orchestration and read-only model response
+- `src/lib/agent/whatsapp-data.ts` — persistence and WhatsApp delivery
+- `src/lib/agent/whatsapp-processor.ts` — media conversion and message processing
+
+## Reliability invariants
+
+- A recognized lead phone from an image/contact card is saved without asking the
+  language model to decide.
+- Preferred-agent follow-up state stores the exact referral ID; it never guesses
+  from chat history.
+- A fresh lead overrides stale follow-up state.
+- Duplicate phones are compared in canonical Malaysian format.
+- The language model receives no write tools.
+- `dryRun:true` performs no workflow, state, database, or WhatsApp writes.
+- Conversation memory is short and excludes media/system/action artifacts before
+  being sent to the model.
+
+## Diagnostics
+
+`GET /api/whatsapp-agent/logs` and
+`GET /api/whatsapp-agent/diagnostics` require a bearer token or API-key header
+matching `WHATSAPP_AGENT_DEBUG_SECRET` or `WHATSAPP_AGENT_PROCESS_SECRET` in
+production.
+
+Run local regression checks with:
+
 ```bash
-curl "https://referral.atap.solar/api/whatsapp-agent/logs?phone=60127119693&limit=20"
+npm test
+npm run lint
+npm run build
 ```
-
-### 2. `GET /api/whatsapp-agent/diagnostics`
-Env flags, Baileys session/chats, recent `et_messages` + `wa_inbound_inbox`.
-Pipeline/health check. (Its message check filters `channel='whatsapp'` — can look
-emptier than reality; cross-check `wa_inbound_inbox`.)
-
-### 3. Offline lab — `scripts/agent-sim.mjs`
-Real instruction + real tools + MiniMax-M3 + mock in-memory DB. Iterate on
-reasoning offline, validate, then transplant the prompt/tools into
-`whatsapp-flow.ts`. Pass the MiniMax key from the Hermes vault (id "minimax")
-via env — the shell's `MINIMAX_API_KEY` is an invalid key:
-```bash
-MINIMAX_API_KEY=sk-... node scripts/agent-sim.mjs [S1 S2 ...]   # or --chat
-```
-Scenarios S1–S13 cover update-by-phone, dedup, namecard add, onboarding,
-preferred-agent, and the phantom-save flow.
-
-### Inject a live test (real pipeline)
-`POST https://ee-baileys-2.up.railway.app/simulate/inbound`
-`{"sessionId":"0182920127","senderPhone":"...","text":"...","messageType":"text"}`.
-⚠️ Sends a real WhatsApp reply; use read-only text ("how many leads") to avoid DB
-writes. Write tools execute even under `dryRun:true`.
-
-## Anti-phantom guard
-MiniMax sometimes claims "Done! Added X" without calling the tool (leads vanish).
-The loop detects a save-claim with no write → nudges (≤2×) → honest fallback,
-never a false "Done." Verify in prod via the EYE log's `guardTrips`/`fallbackUsed`.

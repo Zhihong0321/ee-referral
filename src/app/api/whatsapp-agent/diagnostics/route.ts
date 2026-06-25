@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getWhatsappAgentRuntimeConfig, runWhatsappAgentSql } from "@/lib/agent/whatsapp-data";
+import { isWhatsappAgentRequestAuthorized } from "@/lib/agent/whatsapp-processor";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -37,7 +38,11 @@ async function fetchJson(url: string, init?: RequestInit) {
   return payload;
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  if (!isWhatsappAgentRequestAuthorized(request, ["WHATSAPP_AGENT_DEBUG_SECRET", "WHATSAPP_AGENT_PROCESS_SECRET"])) {
+    return NextResponse.json({ ok: false, error: "Unauthorized." }, { status: 401 });
+  }
+
   const config = getWhatsappAgentRuntimeConfig();
   const baileysBaseUrl = config.baileysBaseUrl.replace(/\/$/, "");
   const sessionId = config.sessionId;
@@ -49,6 +54,9 @@ export async function GET() {
       hasProxyAuth: Boolean(process.env.WHATSAPP_AGENT_PROXY_AUTH || process.env.SANDBOX_PROXY_AUTH),
       hasWebhookVerifyToken: Boolean(process.env.WHATSAPP_AGENT_WEBHOOK_VERIFY_TOKEN),
       hasLlmApiKey: Boolean(process.env.WHATSAPP_AGENT_LLM_API_KEY || process.env.MINIMAX_API_KEY),
+      hasVisionApiKey: Boolean(process.env.WHATSAPP_AGENT_VISION_API_KEY),
+      hasProcessSecret: Boolean(process.env.WHATSAPP_AGENT_PROCESS_SECRET),
+      hasDebugSecret: Boolean(process.env.WHATSAPP_AGENT_DEBUG_SECRET),
       llmModel: process.env.WHATSAPP_AGENT_LLM_MODEL || "MiniMax-M3",
       asrProvider: process.env.WHATSAPP_AGENT_ASR_PROVIDER || "",
       hasUniApiKey: Boolean(process.env.WHATSAPP_AGENT_UNIAPI_API_KEY),

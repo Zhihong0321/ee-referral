@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { loadAgentDebugLog } from "@/lib/agent/whatsapp-data";
+import { isWhatsappAgentRequestAuthorized } from "@/lib/agent/whatsapp-processor";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -11,6 +12,10 @@ export const dynamic = "force-dynamic";
 //   GET /api/whatsapp-agent/logs?limit=10   -> last 10 turns
 //   GET /api/whatsapp-agent/logs?phone=60127119693  -> turns for one referrer
 export async function GET(request: Request) {
+  if (!isWhatsappAgentRequestAuthorized(request, ["WHATSAPP_AGENT_DEBUG_SECRET", "WHATSAPP_AGENT_PROCESS_SECRET"])) {
+    return NextResponse.json({ ok: false, error: "Unauthorized." }, { status: 401 });
+  }
+
   const url = new URL(request.url);
   const phone = url.searchParams.get("phone") || undefined;
   const limit = Math.max(1, Math.min(Number(url.searchParams.get("limit")) || 30, 80));

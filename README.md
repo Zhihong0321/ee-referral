@@ -84,6 +84,13 @@ Railway environment variables to set:
 - `JWT_SECRET`
 - `APP_BASE_URL`
 - `AUTH_HUB_URL`
+- `WHATSAPP_AGENT_BAILEYS_BASE_URL`
+- `WHATSAPP_AGENT_BAILEYS_SESSION_ID`
+- `WHATSAPP_AGENT_PROCESS_SECRET`
+- `WHATSAPP_AGENT_DEBUG_SECRET`
+- `WHATSAPP_AGENT_WEBHOOK_SECRET`
+- `MINIMAX_API_KEY` or `WHATSAPP_AGENT_LLM_API_KEY`
+- `WHATSAPP_AGENT_VISION_API_KEY`
 
 ## WhatsApp Agent Inbound Processing
 
@@ -103,13 +110,13 @@ with:
 }
 ```
 
-The processor reads unreplied inbound rows from `et_messages`, including `message_type`, `text_content`, `media_url`, and `raw_payload`.
+The processor reads unreplied inbound rows from `et_messages`, including `message_type`, `text_content`, `media_url`, and `raw_payload`. Database-changing referral actions are handled by deterministic application workflow. The language model is read-only and is used only for conversational answers and clarification.
 
 Media handling:
 
-- `contact` / `contacts`: parsed from `raw_payload.message.contactMessage` or `contactsArrayMessage`, then sent to the agent as lead name/phone details.
-- `image`: `media_url` is resolved and sent to MiniMax M3 as an image block for visual extraction.
-- `video`: `media_url` is resolved and sent to MiniMax M3 as a video block for visual extraction.
+- `contact` / `contacts`: parsed from `raw_payload.message.contactMessage` or `contactsArrayMessage`, then saved through the deterministic lead workflow.
+- `image`: `media_url` is resolved and sent to the configured vision model for extraction, then saved through the deterministic lead workflow when a phone is present.
+- `video`: `media_url` is resolved and sent to the configured vision model for extraction.
 - `audio` / voice note: `media_url` is downloaded and sent to ASR first, then the transcript is sent to the agent. The verified provider path is UniAPI's Gemini-compatible API with `WHATSAPP_AGENT_ASR_PROVIDER=uniapi`, `WHATSAPP_AGENT_UNIAPI_BASE_URL=https://api.uniapi.io/gemini`, and `WHATSAPP_AGENT_UNIAPI_API_KEY`.
 - `document` / `sticker`: caption, filename, and media URL are preserved; the agent asks for missing text details when the content is not extractable.
 
@@ -118,6 +125,8 @@ Webhook/testing payloads are still supported through:
 ```text
 POST /api/whatsapp-agent/webhook
 ```
+
+Production POST requests require `Authorization: Bearer <WHATSAPP_AGENT_WEBHOOK_SECRET>` (the process secret is also accepted).
 
 The route accepts Meta WhatsApp Cloud API webhook payloads, Baileys-style `messages` arrays, or a simple normalized payload:
 
@@ -134,9 +143,9 @@ The route accepts Meta WhatsApp Cloud API webhook payloads, Baileys-style `messa
 
 For Meta webhook verification, set `WHATSAPP_AGENT_WEBHOOK_VERIFY_TOKEN`; the route responds to `hub.challenge` on `GET /api/whatsapp-agent/webhook`.
 
-Every webhook request is logged as structured JSON in the app server logs with event names like `whatsapp_agent_webhook_post_received`, `whatsapp_agent_webhook_post_ignored`, and `whatsapp_agent_webhook_post_processed`.
+Webhook requests are logged as structured metadata without raw message bodies.
 
-If a message is missing from `et_messages`, check `/api/whatsapp-agent/diagnostics` for recent `wa_inbound_inbox` rows with `process_status != 'processed'` and inspect `last_error`.
+If a message is missing from `et_messages`, call `/api/whatsapp-agent/diagnostics` with the debug bearer token and inspect recent inbox errors.
 
 Local debug helper:
 

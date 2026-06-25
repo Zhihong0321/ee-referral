@@ -17,11 +17,14 @@ export type WhatsappAgentState = {
     | "selecting_update_lead"
     | "selecting_update_field"
     | "collecting_update_value"
-    | "confirming_update";
+    | "confirming_update"
+    | "awaiting_preferred_agent";
   draft: Partial<WhatsappLeadDraft>;
   nextField: WhatsappLeadField | null;
   update?: Partial<WhatsappUpdateDraft>;
   onboarding?: { name?: string };
+  activeLead?: { referralId: number; leadName: string; leadMobile: string; area: string };
+  updatedAt?: string;
   lastLeadList?: Array<{ index: number; referralId: number; leadName: string }>;
 };
 
@@ -112,8 +115,8 @@ function getAgentConfig() {
   const proxyUrl = process.env.WHATSAPP_AGENT_PROXY_URL?.trim() || process.env.SANDBOX_PROXY_URL?.trim();
   const proxyAuth = process.env.WHATSAPP_AGENT_PROXY_AUTH?.trim() || process.env.SANDBOX_PROXY_AUTH?.trim();
   const dbName = process.env.WHATSAPP_AGENT_PROXY_DB_NAME?.trim() || process.env.SANDBOX_PROXY_DB_NAME?.trim();
-  const baileysBaseUrl = (process.env.WHATSAPP_AGENT_BAILEYS_BASE_URL?.trim() || "https://ee-baileys-2.up.railway.app").replace(/\/$/, "");
-  const sessionId = process.env.WHATSAPP_AGENT_BAILEYS_SESSION_ID?.trim() || "0182920127";
+  const baileysBaseUrl = (process.env.WHATSAPP_AGENT_BAILEYS_BASE_URL?.trim() || "").replace(/\/$/, "");
+  const sessionId = process.env.WHATSAPP_AGENT_BAILEYS_SESSION_ID?.trim() || "";
   const tenantId = Number(process.env.WHATSAPP_AGENT_TENANT_ID || DEFAULT_TENANT_ID);
 
   return {
@@ -164,7 +167,7 @@ export function getWhatsappAgentRuntimeConfig() {
 }
 
 export function isWhatsappSuperAdminPhone(phone: string) {
-  const configured = (process.env.WHATSAPP_AGENT_SUPER_ADMIN_PHONES || "601121000099")
+  const configured = (process.env.WHATSAPP_AGENT_SUPER_ADMIN_PHONES || "")
     .split(",")
     .map((value) => toCanonicalMalaysiaPhone(value.trim()))
     .filter(Boolean);
@@ -175,6 +178,9 @@ export function isWhatsappSuperAdminPhone(phone: string) {
 
 export async function ensureChannelSession() {
   const config = getAgentConfig();
+  if (!config.sessionId) {
+    throw new Error("WHATSAPP_AGENT_BAILEYS_SESSION_ID is not configured.");
+  }
   const rows = await runWhatsappAgentSql<{ id: number; metadata: Record<string, unknown> }>(
     `
       WITH existing AS (
@@ -223,6 +229,9 @@ export async function loadAgentState(senderPhone: string): Promise<WhatsappAgent
     draft: state.draft || {},
     nextField: state.nextField || null,
     update: state.update || {},
+    onboarding: state.onboarding || {},
+    activeLead: state.activeLead,
+    updatedAt: state.updatedAt,
     lastLeadList: state.lastLeadList || [],
   };
 }
@@ -258,7 +267,7 @@ export async function saveAgentState(senderPhone: string, state: WhatsappAgentSt
 
 export type ConversationTurn = { role: "user" | "assistant"; text: string; time?: string };
 
-const MAX_CONVERSATION_TURNS = 30;
+const MAX_CONVERSATION_TURNS = 8;
 
 // Conversation memory for the LLM agent. Stored in et_channel_sessions.metadata
 // (proven reliable) rather than relying on et_messages reads.
@@ -1060,6 +1069,9 @@ export async function hasEtMessage(externalMessageId: string, direction?: "inbou
 
 export async function sendWhatsappText(toPhone: string, text: string) {
   const config = getAgentConfig();
+  if (!config.baileysBaseUrl) {
+    throw new Error("WHATSAPP_AGENT_BAILEYS_BASE_URL is not configured.");
+  }
   const payloads = [
     { sessionId: config.sessionId, to: toPhone, text },
     { sessionId: config.sessionId, jid: `${toPhone}@s.whatsapp.net`, text },

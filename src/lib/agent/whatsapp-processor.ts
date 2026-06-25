@@ -35,7 +35,7 @@ export function isWhatsappAgentRequestAuthorized(request: Request, secretNames: 
     .filter((secret): secret is string => Boolean(secret));
 
   if (secrets.length === 0) {
-    return true;
+    return process.env.NODE_ENV !== "production";
   }
 
   const authorization = request.headers.get("authorization") || "";
@@ -256,7 +256,7 @@ async function describeWhatsappVisual(mediaUrl: string, messageType: "image" | "
   const contentType = rawContentType.split(';')[0].trim();
   const mediaBase64 = Buffer.from(await mediaResponse.arrayBuffer()).toString("base64");
 
-  const apiKey = process.env.WHATSAPP_AGENT_VISION_API_KEY || "sk-e277c1aed781df0c08d1df969d76a714e32c3a080477661a3004f71107c9222e";
+  const apiKey = process.env.WHATSAPP_AGENT_VISION_API_KEY || "";
   if (!apiKey) {
     throw new Error("Vision API key is not set.");
   }
@@ -440,8 +440,8 @@ export async function processWhatsappAgentMessages(
   messages: WhatsappAgentMessageInput[],
   options: WhatsappProcessOptions = {},
 ) {
-  const channelSession = await ensureChannelSession();
   const dryRun = Boolean(options.dryRun);
+  const channelSession = dryRun ? null : await ensureChannelSession();
   const results = [];
 
   for (const message of messages) {
@@ -461,11 +461,22 @@ export async function processWhatsappAgentMessages(
 
       const agentInput = await prepareWhatsappInboundForAgent(message);
       const agentText = agentInput.text;
+      if (dryRun) {
+        results.push({
+          id: message.externalMessageId,
+          status: "dry_run",
+          senderPhone,
+          text: agentText,
+          reply: "Dry run prepared the inbound content only; no workflow, database write, or WhatsApp send was executed.",
+        });
+        continue;
+      }
+
       const agentResult = await runWhatsappAgentTurn({ senderPhone, text: agentText });
       const reply = agentResult.reply;
 
       let sendResult: unknown = null;
-      if (!dryRun) {
+      if (channelSession) {
         if (!(await hasEtMessage(message.externalMessageId, "inbound"))) {
           await insertEtMessage({
             externalMessageId: message.externalMessageId,
@@ -492,22 +503,16 @@ export async function processWhatsappAgentMessages(
           channelSessionId: channelSession.id,
         });
 
-        let memoryText = reply;
-        if (agentResult.toolTrace && agentResult.toolTrace.length > 0) {
-          const toolsDesc = agentResult.toolTrace.map(t => `${t.name}(${JSON.stringify(t.input)}) -> status:${t.status}`).join(", ");
-          memoryText = `[System Note: Executed tools: ${toolsDesc}]\n${reply}`;
-        }
-
         const now = new Date().toISOString();
         await appendConversation(senderPhone, [
           { role: "user", text: agentText, time: now },
-          { role: "assistant", text: memoryText, time: now },
+          { role: "assistant", text: reply, time: now },
         ]);
       }
 
       results.push({
         id: message.externalMessageId,
-        status: dryRun ? "dry_run" : "processed",
+        status: "processed",
         senderPhone,
         text: agentText,
         reply,
