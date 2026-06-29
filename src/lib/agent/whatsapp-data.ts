@@ -281,7 +281,7 @@ export async function saveAgentState(senderPhone: string, state: WhatsappAgentSt
 
 export type ConversationTurn = { role: "user" | "assistant"; text: string; time?: string };
 
-const MAX_CONVERSATION_TURNS = 8;
+const MAX_CONVERSATION_TURNS = 30;
 
 // Conversation memory for the LLM agent. Stored in et_channel_sessions.metadata
 // (proven reliable) rather than relying on et_messages reads.
@@ -645,7 +645,13 @@ export async function searchReferrersByPhonePartial(
   phone: string,
   limit = 5,
 ): Promise<Array<{ customerId: string; name: string | null; phone: string | null }>> {
-  const digits = digitsOnly(phone);
+  let digits = digitsOnly(phone);
+  if (digits.startsWith("60")) {
+    digits = digits.slice(2);
+  } else if (digits.startsWith("0")) {
+    digits = digits.slice(1);
+  }
+  
   const rows = await runWhatsappAgentSql<{ customer_id: string; name: string | null; phone: string | null }>(
     `
       SELECT
