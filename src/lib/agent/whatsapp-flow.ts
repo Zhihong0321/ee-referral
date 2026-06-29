@@ -16,6 +16,7 @@ import {
 import { tryRunWhatsappWorkflow, isAdminAuthorized, type WhatsappWorkflowTrace } from "@/lib/agent/whatsapp-workflow";
 import type { ReferralRow } from "@/lib/referrals";
 import { toCanonicalMalaysiaPhone } from "@/lib/phone-normalization";
+import { matchAgentName } from "@/lib/agent/whatsapp-intent";
 
 const PORTAL_URL = process.env.WHATSAPP_AGENT_PORTAL_URL || "https://referral.atap.solar/";
 const LLM_BASE_URL = (process.env.WHATSAPP_AGENT_LLM_BASE_URL || "https://api.minimax.io").replace(/\/$/, "");
@@ -30,7 +31,8 @@ const PROGRAM_KNOWLEDGE = REFERRAL_TERMS.map(
 
 type ModelContentBlock = 
   | { type: "text"; text: string }
-  | { type: "tool_use"; id: string; name: string; input: Record<string, unknown> };
+  | { type: "tool_use"; id: string; name: string; input: Record<string, unknown> }
+  | { type: "tool_result"; tool_use_id: string; content: string };
 type ModelMessage = { role: "user" | "assistant"; content: string | ModelContentBlock[] };
 
 const ADMIN_TOOLS = [
@@ -66,7 +68,8 @@ const ADMIN_TOOLS = [
         referrerPhone: { type: "string", description: "The canonical phone number of the referrer who owns this lead (e.g. 601121000099)." },
         leadName: { type: "string", description: "The name of the lead." },
         leadMobile: { type: "string", description: "The phone number of the lead." },
-        area: { type: "string", description: "The location area of the lead (optional)." }
+        area: { type: "string", description: "The location area of the lead (optional)." },
+        preferredAgent: { type: "string", description: "Optional sales agent name who should handle this lead." }
       },
       required: ["referrerPhone", "leadName", "leadMobile"]
     }
@@ -102,12 +105,32 @@ async function executeAdminTool(name: string, input: Record<string, unknown>, se
       const target = await searchReferrerByPhone(input.referrerPhone);
       if (!target) return { error: "Referrer not found." };
       const mobile = toCanonicalMalaysiaPhone(input.leadMobile);
-      const referralId = await createWhatsappReferral(
+      let preferredAgentId: string | null = null;
+      let preferredAgentName = "";
+
+      if (typeof input.preferredAgent === "string" && input.preferredAgent.trim()) {
+        const match = matchAgentName(input.preferredAgent, await listWhatsappAgents());
+        if (match.status === "none") return { error: `Preferred agent not found: ${input.preferredAgent}` };
+        if (match.status === "ambiguous") return { error: `Preferred agent is ambiguous: ${input.preferredAgent}` };
+        if (match.status === "matched") {
+          preferredAgentId = match.matches[0].id;
+          preferredAgentName = match.matches[0].name;
+        }
+      }
+
+      const created = await createWhatsappReferral(
         target,
         { leadName: input.leadName, leadMobileNumber: mobile, area: typeof input.area === "string" ? input.area : "" },
-        {}
+        { preferredAgentId }
       );
-      return { success: true, referralId, leadMobile: mobile, message: "Lead added successfully." };
+      return {
+        success: true,
+        referralId: created.referralId,
+        leadMobile: mobile,
+        preferredAgent: preferredAgentName,
+        agentNotified: created.preferredAgentNotification,
+        message: "Lead added successfully.",
+      };
     }
     return { error: "Unknown tool." };
   } catch (e: unknown) {
@@ -234,7 +257,7 @@ async function callAgentModel(
   if (payload.stop_reason === "tool_use" || blocks.some((b) => b.type === "tool_use")) {
     messages.push({ role: "assistant", content: blocks });
     
-    const toolResults: Record<string, unknown>[] = [];
+    const toolResults: ModelContentBlock[] = [];
     const toolTrace: WhatsappWorkflowTrace[] = [];
 
     for (const block of blocks) {

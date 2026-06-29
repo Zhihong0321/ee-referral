@@ -40,14 +40,24 @@ async function processPendingDbMessages() {
     throw new Error(payload.error || `Processor returned HTTP ${response.status}`);
   }
 
-  return payload.results || [];
+  return payload;
 }
 
 async function tick() {
-  const results = await processPendingDbMessages();
+  const payload = await processPendingDbMessages();
+  const results = payload.results || [];
+  const preferredAgentNotificationsProcessed = Number(payload.preferredAgentNotificationsProcessed || 0);
 
-  if (results.length > 0) {
-    console.log(JSON.stringify({ at: new Date().toISOString(), source: "et_messages", processed: results.length, results }));
+  if (results.length > 0 || preferredAgentNotificationsProcessed > 0) {
+    console.log(
+      JSON.stringify({
+        at: new Date().toISOString(),
+        source: "et_messages",
+        processed: results.length,
+        preferredAgentNotificationsProcessed,
+        results,
+      }),
+    );
   }
 }
 

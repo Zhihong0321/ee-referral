@@ -2,15 +2,16 @@ import { toCanonicalMalaysiaPhone } from "@/lib/phone-normalization";
 import {
   EMPTY_WHATSAPP_AGENT_STATE,
   loadAgentState,
-  notifyPreferredAgentOfLead,
   saveAgentState,
   saveReferrerProfile,
   createWhatsappReferral,
   updateWhatsappReferral,
+  type WhatsappAgentNotificationResult,
   type WhatsappAgentOption,
   type WhatsappAgentState,
   type WhatsappLeadDraft,
   type WhatsappReferrerAccount,
+  type WhatsappUpdateField,
 } from "@/lib/agent/whatsapp-data";
 import {
   extractAssignmentText,
@@ -93,32 +94,8 @@ function resolveAgent(
   return { ok: true, agent: result.matches[0] };
 }
 
-async function notifyAgent(
-  agent: WhatsappAgentOption,
-  lead: { leadName: string; leadMobile: string; area: string },
-  referrer: WhatsappReferrerAccount,
-) {
-  try {
-    return await notifyPreferredAgentOfLead({
-      agentId: agent.id,
-      agentName: agent.name,
-      leadName: lead.leadName,
-      leadMobile: lead.leadMobile,
-      area: lead.area,
-      referrerName: referrer.name,
-      referrerPhone: referrer.phone,
-    });
-  } catch (error) {
-    return {
-      sent: false,
-      agentPhone: "",
-      reason: error instanceof Error ? error.message : "notification failed",
-    };
-  }
-}
-
-function assignmentReply(agentName: string, notified: { sent: boolean }) {
-  return notified.sent
+function assignmentReply(agentName: string, notified: WhatsappAgentNotificationResult | null) {
+  return notified?.sent
     ? `Done — assigned to ${agentName}. I've notified them to follow up.`
     : `Done — assigned to ${agentName}. I couldn't notify them because no working WhatsApp number is on file.`;
 }
@@ -134,12 +111,12 @@ async function assignAgent(
     return { handled: true, reply: resolved.message, toolTrace: [], referrer: input.referrer, leads: input.leads };
   }
 
-  await updateWhatsappReferral(input.referrer, {
+  const updated = await updateWhatsappReferral(input.referrer, {
     referralId,
     field: "preferredAgent",
     value: resolved.agent.id,
   });
-  const notified = await notifyAgent(resolved.agent, lead, input.referrer);
+  const notified = updated.preferredAgentNotification;
   await clearState(input.senderPhone);
 
   return {
@@ -216,11 +193,12 @@ async function createLead(
     preferredAgent = resolved.agent;
   }
 
-  const referralId = await createWhatsappReferral(
+  const created = await createWhatsappReferral(
     input.referrer,
     { ...draft, leadMobileNumber: mobile },
     { preferredAgentId: preferredAgent?.id || null },
   );
+  const referralId = created.referralId;
   const trace: WhatsappWorkflowTrace[] = [
     {
       name: "add_lead",
@@ -235,11 +213,7 @@ async function createLead(
   ];
 
   if (preferredAgent) {
-    const notified = await notifyAgent(
-      preferredAgent,
-      { leadName: draft.leadName, leadMobile: mobile, area: draft.area },
-      input.referrer,
-    );
+    const notified = created.preferredAgentNotification;
     trace[0].agentNotified = notified;
     await clearState(input.senderPhone);
     return {

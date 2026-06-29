@@ -6,6 +6,7 @@ import {
   processPendingWhatsappAgentMessages,
   processWhatsappAgentMessages,
 } from "@/lib/agent/whatsapp-processor";
+import { processPendingPreferredAgentNotifications } from "@/lib/agent/whatsapp-data";
 
 export const runtime = "nodejs";
 
@@ -49,10 +50,15 @@ export async function POST(request: Request) {
           lookbackMinutes: body.lookbackMinutes,
         })
       : await processWhatsappAgentMessages(body.messages, { dryRun: body.dryRun });
+  const preferredAgentNotifications = body.dryRun
+    ? []
+    : await processPendingPreferredAgentNotifications({ limit: body.limit });
 
   return NextResponse.json({
     processed: results.length,
+    preferredAgentNotificationsProcessed: preferredAgentNotifications.length,
     source: body.source,
     results,
+    preferredAgentNotifications,
   });
 }

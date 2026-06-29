@@ -61,6 +61,19 @@ export type WhatsappUpdateDraft = {
   value: string;
 };
 
+export type WhatsappAgentNotificationResult = {
+  sent: boolean;
+  agentPhone: string;
+  reason?: string;
+};
+
+export type PreferredAgentNotificationProcessResult = WhatsappAgentNotificationResult & {
+  eventId: string;
+  referralId: number;
+  agentId: string;
+  status: "sent" | "failed" | "skipped";
+};
+
 export const EMPTY_WHATSAPP_AGENT_STATE: WhatsappAgentState = {
   mode: "idle",
   draft: {},
@@ -457,7 +470,7 @@ export async function notifyPreferredAgentOfLead(params: {
   area: string;
   referrerName: string;
   referrerPhone: string;
-}): Promise<{ sent: boolean; agentPhone: string; reason?: string }> {
+}): Promise<WhatsappAgentNotificationResult> {
   const agentPhone = await getWhatsappAgentContact(params.agentId);
   if (agentPhone.length < 8) {
     return { sent: false, agentPhone, reason: "agent has no valid contact number on file" };
@@ -481,6 +494,168 @@ export async function notifyPreferredAgentOfLead(params: {
 
   await sendWhatsappText(agentPhone, text);
   return { sent: true, agentPhone };
+}
+
+async function sendPreferredAgentNotificationForReferral(
+  referralId: number,
+  agentId: string | null | undefined,
+): Promise<WhatsappAgentNotificationResult | null> {
+  const preferredAgentId = agentId?.trim();
+  if (!preferredAgentId) return null;
+
+  try {
+    const rows = await runWhatsappAgentSql<{
+      agent_name: string | null;
+      lead_name: string | null;
+      lead_mobile: string | null;
+      lead_state: string | null;
+      lead_city: string | null;
+      referrer_name: string | null;
+      referrer_phone: string | null;
+    }>(
+      `
+        SELECT
+          preferred_agent.name AS agent_name,
+          r.name AS lead_name,
+          COALESCE(NULLIF(r.mobile_number, ''), lead_customer.phone, '') AS lead_mobile,
+          COALESCE(NULLIF(r.lead_state, ''), lead_customer.state, '') AS lead_state,
+          COALESCE(NULLIF(r.lead_city, ''), lead_customer.city, '') AS lead_city,
+          referrer.name AS referrer_name,
+          referrer.phone AS referrer_phone
+        FROM referral r
+        LEFT JOIN customer lead_customer ON lead_customer.customer_id = r.linked_invoice
+        LEFT JOIN customer referrer ON referrer.customer_id = r.linked_customer_profile
+        LEFT JOIN "user" preferred_agent ON preferred_agent.id::text = $2
+        WHERE r.id = $1
+        LIMIT 1
+      `,
+      [referralId, preferredAgentId],
+    );
+    const row = rows[0];
+    if (!row) {
+      return { sent: false, agentPhone: "", reason: "referral was not found after preferred agent was set" };
+    }
+
+    return await notifyPreferredAgentOfLead({
+      agentId: preferredAgentId,
+      agentName: row.agent_name?.trim() || "Agent",
+      leadName: row.lead_name || "",
+      leadMobile: row.lead_mobile || "",
+      area: [row.lead_state, row.lead_city].map((value) => value?.trim()).filter(Boolean).join(", "),
+      referrerName: row.referrer_name || "",
+      referrerPhone: row.referrer_phone || "",
+    });
+  } catch (error) {
+    return {
+      sent: false,
+      agentPhone: "",
+      reason: error instanceof Error ? error.message : "notification failed",
+    };
+  }
+}
+
+export async function processPendingPreferredAgentNotifications(options: {
+  limit?: number;
+  referralId?: number;
+  preferredAgentId?: string | null;
+} = {}): Promise<PreferredAgentNotificationProcessResult[]> {
+  const limit = Math.max(1, Math.min(options.limit || 10, 50));
+  const preferredAgentId = options.preferredAgentId?.trim() || null;
+
+  const events = await runWhatsappAgentSql<{
+    id: string;
+    referral_id: number;
+    preferred_agent_id: string;
+  }>(
+    `
+      WITH next_events AS (
+        SELECT id
+        FROM referral_preferred_agent_notification
+        WHERE status IN ('pending', 'failed')
+          AND attempts < 5
+          AND (claimed_at IS NULL OR claimed_at < NOW() - INTERVAL '5 minutes')
+          AND ($2::bigint IS NULL OR referral_id = $2::bigint)
+          AND ($3::text IS NULL OR preferred_agent_id = $3)
+        ORDER BY created_at ASC, id ASC
+        LIMIT $1
+        FOR UPDATE SKIP LOCKED
+      )
+      UPDATE referral_preferred_agent_notification notification
+      SET
+        status = 'sending',
+        claimed_at = NOW(),
+        attempts = attempts + 1,
+        updated_at = NOW()
+      FROM next_events
+      WHERE notification.id = next_events.id
+      RETURNING
+        notification.id::text,
+        notification.referral_id::int,
+        notification.preferred_agent_id
+    `,
+    [limit, options.referralId || null, preferredAgentId],
+  );
+
+  const results: PreferredAgentNotificationProcessResult[] = [];
+
+  for (const event of events) {
+    const notification = await sendPreferredAgentNotificationForReferral(event.referral_id, event.preferred_agent_id);
+    const finalStatus: PreferredAgentNotificationProcessResult["status"] = notification?.sent
+      ? "sent"
+      : notification?.reason === "agent has no valid contact number on file"
+        ? "skipped"
+        : "failed";
+    const error = notification?.sent ? "" : notification?.reason || "notification failed";
+
+    await runWhatsappAgentSql(
+      `
+        UPDATE referral_preferred_agent_notification
+        SET
+          status = $2,
+          error = NULLIF($3, ''),
+          sent_at = CASE WHEN $2 = 'sent' THEN NOW() ELSE sent_at END,
+          claimed_at = NULL,
+          updated_at = NOW()
+        WHERE id = $1::bigint
+      `,
+      [event.id, finalStatus, error],
+    );
+
+    results.push({
+      eventId: event.id,
+      referralId: event.referral_id,
+      agentId: event.preferred_agent_id,
+      sent: Boolean(notification?.sent),
+      agentPhone: notification?.agentPhone || "",
+      reason: notification?.reason,
+      status: finalStatus,
+    });
+  }
+
+  return results;
+}
+
+async function dispatchPreferredAgentNotificationForReferral(
+  referralId: number,
+  agentId: string | null | undefined,
+): Promise<WhatsappAgentNotificationResult | null> {
+  const preferredAgentId = agentId?.trim();
+  if (!preferredAgentId) return null;
+
+  try {
+    const results = await processPendingPreferredAgentNotifications({
+      limit: 5,
+      referralId,
+      preferredAgentId,
+    });
+    return results.find((result) => result.referralId === referralId && result.agentId === preferredAgentId) || null;
+  } catch (error) {
+    return {
+      sent: false,
+      agentPhone: "",
+      reason: error instanceof Error ? error.message : "notification dispatch failed",
+    };
+  }
 }
 
 export async function resolveOrCreateReferrerByWhatsappPhone(senderPhone: string): Promise<WhatsappReferrerAccount> {
@@ -964,7 +1139,10 @@ export async function createWhatsappReferral(
     ],
   );
 
-  return rows[0].id;
+  const referralId = rows[0].id;
+  const preferredAgentNotification = await dispatchPreferredAgentNotificationForReferral(referralId, preferredAgentId);
+
+  return { referralId, preferredAgentNotification };
 }
 
 export async function updateWhatsappReferral(
@@ -1043,9 +1221,15 @@ export async function updateWhatsappReferral(
     );
   }
 
+  const preferredAgentNotification =
+    update.field === "preferredAgent"
+      ? await dispatchPreferredAgentNotificationForReferral(update.referralId, update.value)
+      : null;
+
   return {
     referralId: update.referralId,
     leadName: update.field === "leadName" ? update.value : existing.lead_name,
+    preferredAgentNotification,
   };
 }
 
