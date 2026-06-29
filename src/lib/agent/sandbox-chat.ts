@@ -7,7 +7,6 @@ import type { AgentSandboxSnapshot } from "@/lib/agent/sandbox";
 import {
   MAX_SANDBOX_MESSAGES,
   type SandboxConversationMessage,
-  type SandboxIntent,
   type SandboxTurn,
 } from "@/lib/agent/sandbox-types";
 

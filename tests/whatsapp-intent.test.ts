@@ -8,6 +8,14 @@ import {
   matchAgentName,
   parseExplicitLeadUpdate,
   parseLeadCandidate,
+  isAdminModeTrigger,
+  isAdminModeExit,
+  parseAdminReferrerQuery,
+  parseAdminReferrerSelection,
+  parseAdminLeadCandidate,
+  isCreateReferrerCommand,
+  isSearchMyReferralsCommand,
+  isSearchReferrerCommand,
 } from "../src/lib/agent/whatsapp-intent.ts";
 
 test("parses referral details extracted from an image", () => {
@@ -104,4 +112,55 @@ test("parses explicit numbered updates", () => {
     field: "agent",
     value: "Zhi Hong",
   });
+});
+
+test("admin mode trigger and exit", () => {
+  assert.equal(isAdminModeTrigger("ee-admin"), true);
+  assert.equal(isAdminModeTrigger(" ee-admin "), true);
+  assert.equal(isAdminModeTrigger("admin"), false);
+  
+  assert.equal(isAdminModeExit("exit"), true);
+  assert.equal(isAdminModeExit("done"), true);
+  assert.equal(isAdminModeExit("quit"), true);
+  assert.equal(isAdminModeExit("leave"), true);
+  assert.equal(isAdminModeExit("stop"), false);
+});
+
+test("admin referrer query parsing", () => {
+  assert.deepEqual(parseAdminReferrerQuery("search referrer 012345678"), { phone: "6012345678" });
+  assert.deepEqual(parseAdminReferrerQuery("6012345678"), { phone: "6012345678" });
+  assert.equal(parseAdminReferrerQuery("abc"), null);
+});
+
+test("admin referrer selection", () => {
+  assert.equal(parseAdminReferrerSelection("1"), 1);
+  assert.equal(parseAdminReferrerSelection(" 2 "), 2);
+  assert.equal(parseAdminReferrerSelection("abc"), null);
+});
+
+test("admin lead candidate with inline referrer phone", () => {
+  const parsed = parseAdminLeadCandidate("0123334444 for 0198887777");
+  assert.equal(parsed?.leadMobileNumber, "0123334444");
+  assert.equal(parsed?.referrerPhone, "60198887777");
+  
+  const parsed2 = parseAdminLeadCandidate("0123334444 under referrer 60198887777");
+  assert.equal(parsed2?.leadMobileNumber, "0123334444");
+  assert.equal(parsed2?.referrerPhone, "60198887777");
+  
+  const parsed3 = parseAdminLeadCandidate("0123334444");
+  assert.equal(parsed3?.leadMobileNumber, "0123334444");
+  assert.equal(parsed3?.referrerPhone, "");
+});
+
+test("admin commands detection", () => {
+  assert.equal(isCreateReferrerCommand("create referrer"), true);
+  assert.equal(isCreateReferrerCommand("new Ali"), true);
+  assert.equal(isCreateReferrerCommand("add Kumar"), true);
+  
+  assert.equal(isSearchMyReferralsCommand("my leads"), true);
+  assert.equal(isSearchMyReferralsCommand("show leads"), true);
+  
+  assert.equal(isSearchReferrerCommand("search referrer"), true);
+  assert.equal(isSearchReferrerCommand("find referrer"), true);
+  assert.equal(isSearchReferrerCommand("lookup referrer 0123"), true);
 });

@@ -1,12 +1,16 @@
 import { toCanonicalMalaysiaPhone } from "@/lib/phone-normalization";
 import {
+  createReferrerOnBehalf,
   createWhatsappReferral,
   EMPTY_WHATSAPP_AGENT_STATE,
   loadAgentState,
   notifyPreferredAgentOfLead,
   saveAgentState,
   saveReferrerProfile,
+  searchReferrerByPhone,
+  searchReferrersByPhonePartial,
   updateWhatsappReferral,
+  listWhatsappReferrals,
   type WhatsappAgentOption,
   type WhatsappAgentState,
   type WhatsappLeadDraft,
@@ -15,9 +19,17 @@ import {
 } from "@/lib/agent/whatsapp-data";
 import {
   extractAssignmentText,
+  isAdminModeExit,
+  isAdminModeTrigger,
   isCancelMessage,
+  isCreateReferrerCommand,
+  isSearchMyReferralsCommand,
+  isSearchReferrerCommand,
   isSkipMessage,
   matchAgentName,
+  parseAdminLeadCandidate,
+  parseAdminReferrerQuery,
+  parseAdminReferrerSelection,
   parseExplicitLeadUpdate,
   parseLeadCandidate,
 } from "@/lib/agent/whatsapp-intent";
@@ -372,9 +384,292 @@ async function handleOnboarding(
   };
 }
 
+function adminReply(message: string) {
+  return `[ADMIN MODE]\n${message}`;
+}
+
+function isAdminAuthorized(phone: string) {
+  void phone;
+  return true;
+}
+
+async function handleAdminModeEntry(input: WorkflowInput, state: WhatsappAgentState): Promise<WhatsappWorkflowResult> {
+  void state;
+  await persistState(input.senderPhone, {
+    ...EMPTY_WHATSAPP_AGENT_STATE,
+    mode: "admin_idle",
+    adminContext: { adminPhone: input.senderPhone }
+  });
+  return {
+    handled: true,
+    reply: adminReply("Admin mode activated. You can 'search referrer <phone>', 'create <name>', or add leads. Reply 'exit' to leave."),
+    toolTrace: [{ name: "admin_mode_entry", status: "success", input: { phone: input.senderPhone } }],
+    referrer: input.referrer,
+    leads: input.leads,
+  };
+}
+
+async function handleAdminModeExit(input: WorkflowInput, state: WhatsappAgentState): Promise<WhatsappWorkflowResult> {
+  void state;
+  await clearState(input.senderPhone);
+  return {
+    handled: true,
+    reply: adminReply("Exited admin mode."),
+    toolTrace: [{ name: "admin_mode_exit", status: "success", input: { phone: input.senderPhone } }],
+    referrer: input.referrer,
+    leads: input.leads,
+  };
+}
+
+async function handleAdminSearchReferrer(input: WorkflowInput, state: WhatsappAgentState): Promise<WhatsappWorkflowResult> {
+  const query = parseAdminReferrerQuery(input.message);
+  if (!query) {
+    return { handled: true, reply: adminReply("Please provide a valid phone number."), toolTrace: [{ name: "admin_search_referrer", status: "failed", input: { error: "invalid_phone", text: input.message } }], referrer: input.referrer, leads: input.leads };
+  }
+  const results = await searchReferrersByPhonePartial(query.phone);
+  if (results.length === 0) {
+    return { handled: true, reply: adminReply(`No referrers found matching ${query.phone}.`), toolTrace: [{ name: "admin_search_referrer", status: "failed", input: { error: "not_found", phone: query.phone } }], referrer: input.referrer, leads: input.leads };
+  }
+  if (results.length === 1) {
+    const target = await searchReferrerByPhone(results[0].phone || "");
+    await persistState(input.senderPhone, {
+      ...state,
+      mode: "admin_idle",
+      adminContext: { ...state.adminContext!, targetReferrer: target }
+    });
+    return { handled: true, reply: adminReply(`Selected referrer: ${target?.name} (${target?.phone}).`), toolTrace: [{ name: "admin_search_referrer", status: "success", input: { match: "single", phone: target?.phone } }], referrer: input.referrer, leads: input.leads };
+  }
+  
+  await persistState(input.senderPhone, {
+    ...state,
+    mode: "admin_selecting_referrer",
+    adminContext: { ...state.adminContext!, targetReferrerSearchResults: results }
+  });
+  const lines = results.map((r, i) => `${i + 1}. ${r.name || "Unknown"} (${r.phone || "No phone"})`);
+  return { handled: true, reply: adminReply(`Found ${results.length} referrers:\n${lines.join("\n")}\nReply with a number to select.`), toolTrace: [{ name: "admin_search_referrer", status: "success", input: { match: "multiple", count: results.length } }], referrer: input.referrer, leads: input.leads };
+}
+
+async function handleAdminSelectReferrer(input: WorkflowInput, state: WhatsappAgentState): Promise<WhatsappWorkflowResult> {
+  const index = parseAdminReferrerSelection(input.message);
+  const results = state.adminContext?.targetReferrerSearchResults || [];
+  if (index === null || index < 1 || index > results.length) {
+    return { handled: true, reply: adminReply("Invalid selection. Please reply with a valid number from the list."), toolTrace: [{ name: "admin_select_referrer", status: "failed", input: { error: "invalid_selection" } }], referrer: input.referrer, leads: input.leads };
+  }
+  const selected = results[index - 1];
+  const target = await searchReferrerByPhone(selected.phone || "");
+  await persistState(input.senderPhone, {
+    ...state,
+    mode: "admin_idle",
+    adminContext: { adminPhone: input.senderPhone, targetReferrer: target }
+  });
+  return { handled: true, reply: adminReply(`Selected referrer: ${target?.name} (${target?.phone}).`), toolTrace: [{ name: "admin_select_referrer", status: "success", input: { phone: target?.phone } }], referrer: input.referrer, leads: input.leads };
+}
+
+async function handleAdminCreateReferrer(input: WorkflowInput, state: WhatsappAgentState): Promise<WhatsappWorkflowResult> {
+  if (state.mode === "admin_creating_referrer_name") {
+    const name = input.message.trim();
+    if (!name) return { handled: true, reply: adminReply("Please provide a valid name."), toolTrace: [{ name: "admin_create_referrer", status: "failed", input: { step: "name", error: "empty" } }], referrer: input.referrer, leads: input.leads };
+    await persistState(input.senderPhone, {
+      ...state,
+      mode: "admin_creating_referrer_phone",
+      adminContext: { ...state.adminContext!, newReferrerName: name }
+    });
+    return { handled: true, reply: adminReply(`Name set to "${name}". What is their phone number?`), toolTrace: [{ name: "admin_create_referrer", status: "success", input: { step: "name", name } }], referrer: input.referrer, leads: input.leads };
+  }
+  if (state.mode === "admin_creating_referrer_phone") {
+    const query = parseAdminReferrerQuery(input.message);
+    if (!query) {
+      return { handled: true, reply: adminReply("Please provide a valid phone number (digits only)."), toolTrace: [{ name: "admin_create_referrer", status: "failed", input: { step: "phone", error: "invalid", text: input.message } }], referrer: input.referrer, leads: input.leads };
+    }
+    const phone = query.phone;
+    const name = state.adminContext?.newReferrerName || "Unknown";
+    const newReferrer = await createReferrerOnBehalf({ name, phone, createdBy: input.senderPhone });
+    await persistState(input.senderPhone, {
+      ...state,
+      mode: "admin_idle",
+      adminContext: { adminPhone: input.senderPhone, targetReferrer: newReferrer }
+    });
+    return { handled: true, reply: adminReply(`Referrer created: ${newReferrer.name} (${newReferrer.phone}). They are now the active target.`), toolTrace: [{ name: "admin_create_referrer", status: "success", input: { step: "phone", phone } }], referrer: input.referrer, leads: input.leads };
+  }
+  return { handled: true, reply: adminReply("Invalid state for create."), toolTrace: [], referrer: input.referrer, leads: input.leads };
+}
+
+async function handleAdminAddLead(
+  input: WorkflowInput,
+  state: WhatsappAgentState,
+  draft: { leadName: string; leadMobileNumber: string; area: string; preferredAgentText?: string },
+  targetReferrer: WhatsappReferrerAccount
+): Promise<WhatsappWorkflowResult> {
+  const mobile = toCanonicalMalaysiaPhone(draft.leadMobileNumber);
+  if (mobile.length < 8) {
+    return { handled: true, reply: adminReply("I couldn't recognize a valid contact number. Please send the lead's phone number in text."), toolTrace: [{ name: "admin_add_lead", status: "failed", input: { error: "invalid_phone" } }], referrer: input.referrer, leads: input.leads };
+  }
+
+  const targetLeads = await listWhatsappReferrals(targetReferrer.customerId);
+  const duplicate = findDuplicate(targetLeads, mobile);
+
+  if (duplicate) {
+    if (draft.preferredAgentText) {
+      const result = await assignAgent(
+        { ...input, referrer: targetReferrer, leads: targetLeads },
+        duplicate.id,
+        { leadName: duplicate.leadName, leadMobile: duplicate.leadMobile || mobile, area: areaLabel(duplicate) },
+        draft.preferredAgentText
+      );
+      await persistState(input.senderPhone, { ...state, mode: "admin_idle" });
+      return { ...result, reply: adminReply(result.reply) };
+    }
+    
+    await persistState(input.senderPhone, {
+      ...state,
+      mode: "admin_awaiting_preferred_agent",
+      activeLead: { referralId: duplicate.id, leadName: duplicate.leadName, leadMobile: duplicate.leadMobile || mobile, area: areaLabel(duplicate) }
+    });
+    return { handled: true, reply: adminReply(`${displayLeadName(duplicate.leadName)} (${mobile}) is already in their list. Do you want to assign a preferred agent? Reply with the agent's name, or skip.`), toolTrace: [{ name: "admin_add_lead", status: "duplicate_agent_prompt", input: { mobile } }], referrer: input.referrer, leads: input.leads };
+  }
+
+  let preferredAgent: WhatsappAgentOption | null = null;
+  if (draft.preferredAgentText) {
+    const resolved = resolveAgent(draft.preferredAgentText, input.agents);
+    if (!resolved.ok) {
+      return { handled: true, reply: adminReply(resolved.message), toolTrace: [{ name: "admin_add_lead", status: "failed", input: { error: "agent_not_found" } }], referrer: input.referrer, leads: input.leads };
+    }
+    preferredAgent = resolved.agent;
+  }
+
+  const referralId = await createWhatsappReferral(
+    targetReferrer,
+    { ...draft, leadMobileNumber: mobile },
+    { preferredAgentId: preferredAgent?.id || null },
+  );
+  const trace: WhatsappWorkflowTrace[] = [{ name: "admin_add_lead", input: { mobile, name: draft.leadName, area: draft.area, preferredAgent: preferredAgent?.name || "" }, status: "saved" }];
+
+  if (preferredAgent) {
+    const notified = await notifyAgent(preferredAgent, { leadName: draft.leadName, leadMobile: mobile, area: draft.area }, targetReferrer);
+    trace[0].agentNotified = notified;
+    await persistState(input.senderPhone, { ...state, mode: "admin_idle" });
+    return { handled: true, reply: adminReply(`${displayLeadName(draft.leadName)} (${mobile}) has been added for ${targetReferrer.name}. ${assignmentReply(preferredAgent.name, notified)}`), toolTrace: trace, referrer: input.referrer, leads: input.leads };
+  }
+
+  if (input.agents.length > 0) {
+    await persistState(input.senderPhone, {
+      ...state,
+      mode: "admin_awaiting_preferred_agent",
+      activeLead: { referralId, leadName: draft.leadName, leadMobile: mobile, area: draft.area }
+    });
+    return { handled: true, reply: adminReply(`${displayLeadName(draft.leadName)} (${mobile}) has been added for ${targetReferrer.name}. Do you have a preferred agent to handle this lead? Reply with the agent's name, or skip.`), toolTrace: trace, referrer: input.referrer, leads: input.leads };
+  }
+
+  await persistState(input.senderPhone, { ...state, mode: "admin_idle" });
+  return { handled: true, reply: adminReply(`${displayLeadName(draft.leadName)} (${mobile}) has been added for ${targetReferrer.name}.`), toolTrace: trace, referrer: input.referrer, leads: input.leads };
+}
+
+async function handleAdminAwaitingPreferredAgent(input: WorkflowInput, state: WhatsappAgentState): Promise<WhatsappWorkflowResult> {
+  const targetReferrer = state.adminContext?.targetReferrer;
+  if (!targetReferrer || !state.activeLead) {
+    await persistState(input.senderPhone, { ...state, mode: "admin_idle" });
+    return { handled: true, reply: adminReply("Lost lead context. Returning to admin idle."), toolTrace: [], referrer: input.referrer, leads: input.leads };
+  }
+
+  if (isSkipMessage(input.message)) {
+    await persistState(input.senderPhone, { ...state, mode: "admin_idle" });
+    return { handled: true, reply: adminReply("No problem — I'll leave the lead unassigned."), toolTrace: [], referrer: input.referrer, leads: input.leads };
+  }
+
+  const targetLeads = await listWhatsappReferrals(targetReferrer.customerId);
+  const result = await assignAgent(
+    { ...input, referrer: targetReferrer, leads: targetLeads },
+    state.activeLead.referralId,
+    { leadName: state.activeLead.leadName, leadMobile: state.activeLead.leadMobile, area: state.activeLead.area },
+    input.message
+  );
+  
+  await persistState(input.senderPhone, { ...state, mode: "admin_idle" });
+  return { ...result, reply: adminReply(result.reply) };
+}
+
+async function handleAdminIdleCommand(input: WorkflowInput, state: WhatsappAgentState): Promise<WhatsappWorkflowResult> {
+  const text = input.message;
+
+  if (isSearchReferrerCommand(text)) {
+    return handleAdminSearchReferrer(input, state);
+  }
+
+  if (isSearchMyReferralsCommand(text)) {
+    const target = state.adminContext?.targetReferrer;
+    if (!target) {
+      return { handled: true, reply: adminReply("No referrer selected. Please search or create one first."), toolTrace: [{ name: "admin_my_leads", status: "failed", input: { error: "no_referrer_selected" } }], referrer: input.referrer, leads: input.leads };
+    }
+    const targetLeads = await listWhatsappReferrals(target.customerId);
+    const leadsList = targetLeads.length > 0
+      ? targetLeads.map((l, i) => `${i + 1}. ${l.leadName || "no name"} (${l.leadMobile || "no phone"}) - ${l.status || "Pending"}`).join("\n")
+      : "No leads found.";
+    return { handled: true, reply: adminReply(`Leads for ${target.name}:\n\n${leadsList}`), toolTrace: [{ name: "admin_my_leads", status: "success", input: { referrer: target.name, count: targetLeads.length } }], referrer: input.referrer, leads: input.leads };
+  }
+
+  if (isCreateReferrerCommand(text)) {
+    const nameMatch = text.match(/^(?:create|new|add)\s+(.+)/i);
+    const nameText = nameMatch ? nameMatch[1].trim() : "";
+    if (nameText) {
+      await persistState(input.senderPhone, {
+        ...state,
+        mode: "admin_creating_referrer_phone",
+        adminContext: { ...state.adminContext!, newReferrerName: nameText }
+      });
+      return { handled: true, reply: adminReply(`Creating referrer "${nameText}". Please provide their phone number.`), toolTrace: [{ name: "admin_create_referrer", status: "started", input: { name: nameText } }], referrer: input.referrer, leads: input.leads };
+    }
+    await persistState(input.senderPhone, {
+      ...state,
+      mode: "admin_creating_referrer_name"
+    });
+    return { handled: true, reply: adminReply("Please provide the new referrer's name."), toolTrace: [{ name: "admin_create_referrer", status: "started", input: {} }], referrer: input.referrer, leads: input.leads };
+  }
+
+  const candidate = parseAdminLeadCandidate(text);
+  if (candidate) {
+    if (candidate.referrerPhone) {
+      const target = await searchReferrerByPhone(candidate.referrerPhone);
+      if (!target) {
+         return { handled: true, reply: adminReply(`Could not find a referrer matching ${candidate.referrerPhone}.`), toolTrace: [{ name: "admin_add_lead", status: "failed", input: { error: "referrer_not_found", phone: candidate.referrerPhone } }], referrer: input.referrer, leads: input.leads };
+      }
+      return handleAdminAddLead(input, state, candidate, target);
+    } else if (state.adminContext?.targetReferrer) {
+      return handleAdminAddLead(input, state, candidate, state.adminContext.targetReferrer);
+    } else {
+      return { handled: true, reply: adminReply("No referrer selected. Please search or create one first, or include 'for <phone>' in your message."), toolTrace: [{ name: "admin_add_lead", status: "failed", input: { error: "no_referrer_selected" } }], referrer: input.referrer, leads: input.leads };
+    }
+  }
+
+  return { handled: true, reply: adminReply("Unrecognized admin command. You can 'search referrer <phone>', 'create <name>', 'my leads', or 'exit'."), toolTrace: [{ name: "admin_unknown_command", status: "failed", input: { text } }], referrer: input.referrer, leads: input.leads };
+}
+
 export async function tryRunWhatsappWorkflow(input: WorkflowInput): Promise<WhatsappWorkflowResult> {
   const storedState = freshState(await loadAgentState(input.senderPhone));
   const candidate = parseLeadCandidate(input.message);
+
+  if (isAdminAuthorized(input.senderPhone)) {
+    if (isAdminModeExit(input.message) && (storedState.mode.startsWith("admin_") || isAdminModeTrigger(input.message))) {
+      return handleAdminModeExit(input, storedState);
+    }
+    if (isAdminModeTrigger(input.message) && !storedState.mode.startsWith("admin_")) {
+      return handleAdminModeEntry(input, storedState);
+    }
+    if (storedState.mode.startsWith("admin_")) {
+      if (storedState.mode === "admin_idle") {
+        return handleAdminIdleCommand(input, storedState);
+      }
+      if (storedState.mode === "admin_creating_referrer_name" || storedState.mode === "admin_creating_referrer_phone") {
+        return handleAdminCreateReferrer(input, storedState);
+      }
+      if (storedState.mode === "admin_selecting_referrer") {
+        return handleAdminSelectReferrer(input, storedState);
+      }
+      if (storedState.mode === "admin_awaiting_preferred_agent") {
+        return handleAdminAwaitingPreferredAgent(input, storedState);
+      }
+      return { handled: true, reply: adminReply("Invalid admin state."), toolTrace: [], referrer: input.referrer, leads: input.leads };
+    }
+  }
 
   if (isCancelMessage(input.message)) {
     await clearState(input.senderPhone);

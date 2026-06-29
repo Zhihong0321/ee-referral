@@ -4,6 +4,7 @@ export type ParsedLeadCandidate = {
   area: string;
   preferredAgentText: string;
   source: "structured_media" | "explicit_text";
+  referrerPhone?: string;
 };
 
 const PHONE_PATTERN = /(?:\+?60|0)(?:[\s().-]*\d){7,11}/g;
@@ -160,4 +161,59 @@ export function parseExplicitLeadUpdate(text: string) {
     field: numbered[2].toLowerCase() as "name" | "phone" | "mobile" | "area" | "agent",
     value: cleanValue(numbered[3]),
   };
+}
+
+const REFERRER_PHONE_PATTERN = /\b(?:for|under|referrer|account)\s*[:=]?\s*(.+)/i;
+
+export function isAdminModeTrigger(text: string) {
+  return /^ee-admin$/i.test(text.trim());
+}
+
+export function isAdminModeExit(text: string) {
+  return /^(?:exit|done|quit|leave)$/i.test(text.trim());
+}
+
+function toCanonicalAdminPhone(value: string): string {
+  const digits = value.replace(/\D/g, "");
+  if (!digits) return "";
+  if (digits.startsWith("60")) return digits;
+  if (digits.startsWith("0")) return `60${digits.slice(1)}`;
+  return `60${digits}`;
+}
+
+export function parseAdminReferrerQuery(text: string) {
+  const digits = text.replace(/\D/g, "");
+  if (!digits || digits.length < 7) return null;
+  return { phone: toCanonicalAdminPhone(digits) };
+}
+
+export function parseAdminReferrerSelection(text: string) {
+  const match = text.trim().match(/^\d+$/);
+  return match ? Number(match[0]) : null;
+}
+
+function extractReferrerPhone(text: string) {
+  const match = text.match(REFERRER_PHONE_PATTERN);
+  if (!match?.[1]) return "";
+  const phone = extractPhoneText(match[1]);
+  return phone ? toCanonicalAdminPhone(phone) : "";
+}
+
+export function parseAdminLeadCandidate(text: string): ParsedLeadCandidate | null {
+  const base = parseLeadCandidate(text);
+  if (!base) return null;
+  const referrerPhone = extractReferrerPhone(text);
+  return { ...base, referrerPhone };
+}
+
+export function isCreateReferrerCommand(text: string) {
+  return /^(?:create|new|add)\b/i.test(text.trim());
+}
+
+export function isSearchMyReferralsCommand(text: string) {
+  return /^(?:my\s+leads|my\s+referrals|list\s+leads|show\s+leads)\b/i.test(text.trim());
+}
+
+export function isSearchReferrerCommand(text: string) {
+  return /^(?:search|find|lookup)\s+referrer\b/i.test(text.trim());
 }

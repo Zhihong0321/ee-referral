@@ -1,5 +1,5 @@
 import { PROJECT_TYPE_OPTIONS, RELATIONSHIP_OPTIONS, type ProjectTypeOption, type ReferralRow, type RelationshipOption } from "@/lib/referrals";
-import { buildPhoneMatchCandidates, toCanonicalMalaysiaPhone } from "@/lib/phone-normalization";
+import { buildPhoneMatchCandidates, digitsOnly, toCanonicalMalaysiaPhone } from "@/lib/phone-normalization";
 import { query } from "@/lib/db";
 
 const DEFAULT_TENANT_ID = 1;
@@ -18,7 +18,14 @@ export type WhatsappAgentState = {
     | "selecting_update_field"
     | "collecting_update_value"
     | "confirming_update"
-    | "awaiting_preferred_agent";
+    | "awaiting_preferred_agent"
+    | "admin_idle"
+    | "admin_searching_referrer"
+    | "admin_creating_referrer_name"
+    | "admin_creating_referrer_phone"
+    | "admin_selecting_referrer"
+    | "admin_adding_lead"
+    | "admin_awaiting_preferred_agent";
   draft: Partial<WhatsappLeadDraft>;
   nextField: WhatsappLeadField | null;
   update?: Partial<WhatsappUpdateDraft>;
@@ -26,6 +33,13 @@ export type WhatsappAgentState = {
   activeLead?: { referralId: number; leadName: string; leadMobile: string; area: string };
   updatedAt?: string;
   lastLeadList?: Array<{ index: number; referralId: number; leadName: string }>;
+  adminContext?: {
+    adminPhone: string;
+    targetReferrer?: WhatsappReferrerAccount | null;
+    targetReferrerSearchResults?: Array<{ customerId: string; name: string | null; phone: string | null }>;
+    newReferrerName?: string;
+    pendingLead?: WhatsappLeadDraft & { preferredAgentText?: string };
+  };
 };
 
 // Minimal lead: only the contact number is strictly required. Name is collected
@@ -589,6 +603,102 @@ export async function saveReferrerProfile(
     bankAccount: input.bankAccount,
     registered: true,
   };
+}
+
+export async function searchReferrerByPhone(phone: string): Promise<WhatsappReferrerAccount | null> {
+  const candidates = buildPhoneMatchCandidates(phone);
+  const values = candidates.map((candidate) => candidate.value);
+
+  const rows = await runWhatsappAgentSql<ReferrerRow>(
+    `
+      WITH candidates AS (
+        SELECT value, rank, ordinality::int AS match_index
+        FROM unnest($1::text[], $2::int[]) WITH ORDINALITY AS c(value, rank, ordinality)
+      )
+      SELECT
+        c.customer_id,
+        c.name,
+        c.phone,
+        c.notes,
+        candidates.rank AS match_rank,
+        candidates.match_index,
+        lower(COALESCE(NULLIF(c.name, ''), $5)) = lower($5) AS is_generic_name
+      FROM customer c
+      JOIN candidates ON c.phone = candidates.value
+      WHERE c.remark IN ($3, $4)
+      ORDER BY
+        candidates.rank ASC,
+        candidates.match_index ASC,
+        is_generic_name ASC,
+        c.created_at ASC NULLS LAST,
+        c.id ASC
+      LIMIT 1
+    `,
+    [values, candidates.map((candidate) => candidate.rank), REFERRAL_MARKER, LEGACY_REFERRER_MARKER, REFERRAL_ACCOUNT_NAME],
+  );
+
+  if (!rows[0]) return null;
+  return buildReferrerAccount(rows[0], phone);
+}
+
+export async function searchReferrersByPhonePartial(
+  phone: string,
+  limit = 5,
+): Promise<Array<{ customerId: string; name: string | null; phone: string | null }>> {
+  const digits = digitsOnly(phone);
+  const rows = await runWhatsappAgentSql<{ customer_id: string; name: string | null; phone: string | null }>(
+    `
+      SELECT
+        c.customer_id,
+        c.name,
+        c.phone
+      FROM customer c
+      WHERE c.remark IN ($1, $2)
+        AND regexp_replace(COALESCE(c.phone, ''), '\\D', '', 'g') LIKE $3
+      ORDER BY c.created_at DESC NULLS LAST, c.id DESC
+      LIMIT $4
+    `,
+    [REFERRAL_MARKER, LEGACY_REFERRER_MARKER, `%${digits}%`, limit],
+  );
+
+  return rows.map((row) => ({ customerId: row.customer_id, name: row.name, phone: row.phone }));
+}
+
+export async function createReferrerOnBehalf(input: {
+  name: string;
+  phone: string;
+  createdBy: string;
+}): Promise<WhatsappReferrerAccount> {
+  const canonicalPhone = toCanonicalMalaysiaPhone(input.phone);
+  const generatedCustomerId = `ref_${crypto.randomUUID().replace(/-/g, "").slice(0, 12)}`;
+  const notes = JSON.stringify({
+    kind: "referral_account",
+    source: "whatsapp_admin",
+    createdBy: input.createdBy,
+    originalWhatsappPhone: input.phone,
+    canonicalPhone,
+    createdAt: new Date().toISOString(),
+  });
+
+  const inserted = await runWhatsappAgentSql<ReferrerRow>(
+    `
+      INSERT INTO customer (
+        customer_id,
+        name,
+        phone,
+        lead_source,
+        remark,
+        notes,
+        created_by,
+        updated_by
+      )
+      VALUES ($1, $2, $3, 'other', $4, $5, $6, $6)
+      RETURNING customer_id, name, phone, notes, 0 AS match_rank, 0 AS match_index, false AS is_generic_name
+    `,
+    [generatedCustomerId, input.name.trim(), canonicalPhone, REFERRAL_MARKER, notes, APP_ACTOR],
+  );
+
+  return buildReferrerAccount(inserted[0], canonicalPhone);
 }
 
 function parseNotes(notes: string | null) {
