@@ -107,11 +107,11 @@ export const REGULAR_USER_TOOLS = [
 export const ADMIN_TOOLS = [
   {
     name: "admin_search_referrer",
-    description: "Search for a referrer by phone number (partial allowed). Returns matching referrer accounts.",
+    description: "Search for a referrer by phone number (partial allowed) OR by account name (fuzzy). Returns matching referrer accounts.",
     input_schema: {
       type: "object",
       properties: {
-        query: { type: "string", description: "Phone number or partial phone to search for." },
+        query: { type: "string", description: "Phone number, partial phone, or referrer name to search for." },
       },
       required: ["query"],
     },
@@ -130,17 +130,17 @@ export const ADMIN_TOOLS = [
   },
   {
     name: "admin_add_lead",
-    description: "Add a lead for a specific referrer identified by their phone number. The referrer must already exist.",
+    description: "Add a lead for a referrer identified by phone number OR account name. The referrer must already exist; if the name/phone matches more than one, you will be asked to disambiguate.",
     input_schema: {
       type: "object",
       properties: {
-        referrerPhone: { type: "string", description: "The referrer's phone number." },
+        referrer: { type: "string", description: "The referrer's phone number or account name." },
         name: { type: "string", description: "Lead's name." },
         phone: { type: "string", description: "Lead's mobile phone number. Required." },
         area: { type: "string", description: "Lead's area or state." },
         preferredAgentName: { type: "string", description: "Preferred agent name." },
       },
-      required: ["referrerPhone", "phone"],
+      required: ["referrer", "phone"],
     },
   },
 ];
@@ -245,6 +245,51 @@ function resolveAgentId(name: string, agents: WhatsappAgentOption[]): ToolResult
     success: false,
     error: `No agent found matching "${name}".`,
     hint: "Use search_agents to list valid agents, or ask the user to confirm the name.",
+  };
+}
+
+/**
+ * Resolve a referrer from a phone number OR an account name (fuzzy).
+ * - Exact phone match wins immediately.
+ * - Otherwise search by phone fragment / name; exactly one match resolves,
+ *   multiple matches return an error listing them so the model can disambiguate.
+ */
+async function resolveReferrer(query: string): Promise<ToolResult<WhatsappReferrerAccount>> {
+  // Try an exact phone match first when the query looks like a number.
+  const normalizedPhone = toCanonicalMalaysiaPhone(query);
+  if (normalizedPhone) {
+    const byPhone = await searchReferrerByPhone(normalizedPhone);
+    if (byPhone) return { success: true, data: byPhone };
+  }
+
+  // Fall back to fuzzy phone/name search.
+  const matches = await searchReferrersByPhonePartial(query, 10);
+  if (matches.length === 0) {
+    return {
+      success: false,
+      error: `Referrer not found: "${query}".`,
+      hint: "Use admin_create_referrer to create them, or try a different phone/name.",
+    };
+  }
+  if (matches.length > 1) {
+    const list = matches.map((m) => `${m.name || "(no name)"} — ${m.phone || "no phone"}`).join("; ");
+    return {
+      success: false,
+      error: `"${query}" matches multiple referrers: ${list}.`,
+      hint: "Ask the user which referrer (by phone) before adding the lead.",
+    };
+  }
+
+  const only = matches[0];
+  return {
+    success: true,
+    data: {
+      customerId: only.customerId,
+      name: only.name || "Referral",
+      phone: only.phone || "",
+      bankAccount: "",
+      registered: false,
+    },
   };
 }
 
@@ -548,28 +593,20 @@ async function adminCreateReferrer(
 }
 
 async function adminAddLead(input: Record<string, unknown>): Promise<ToolResult> {
-  const referrerPhone = str(input.referrerPhone);
-  if (!referrerPhone) {
+  // Accept either the new `referrer` field (phone OR name) or the legacy
+  // `referrerPhone` field for backward compatibility.
+  const referrerQuery = str(input.referrer) || str(input.referrerPhone);
+  if (!referrerQuery) {
     return {
       success: false,
-      error: "Referrer phone is required.",
+      error: "Referrer phone or name is required.",
       hint: "Use admin_search_referrer first to find the referrer.",
     };
   }
 
-  const normalizedReferrerPhone = toCanonicalMalaysiaPhone(referrerPhone);
-  if (!normalizedReferrerPhone) {
-    return { success: false, error: `Invalid referrer phone format: ${referrerPhone}` };
-  }
-
-  const referrer = await searchReferrerByPhone(normalizedReferrerPhone);
-  if (!referrer) {
-    return {
-      success: false,
-      error: `Referrer not found: ${referrerPhone}`,
-      hint: "Use admin_create_referrer to create them first.",
-    };
-  }
+  const referrerResult = await resolveReferrer(referrerQuery);
+  if (!referrerResult.success) return referrerResult;
+  const referrer = referrerResult.data;
 
   const name = str(input.name);
   const phone = str(input.phone);

@@ -825,16 +825,26 @@ export async function searchReferrerByPhone(phone: string): Promise<WhatsappRefe
 }
 
 export async function searchReferrersByPhonePartial(
-  phone: string,
+  query: string,
   limit = 5,
 ): Promise<Array<{ customerId: string; name: string | null; phone: string | null }>> {
-  let digits = digitsOnly(phone);
+  const trimmed = (query || "").trim();
+  if (!trimmed) return [];
+
+  // Phone fragment: strip a Malaysia prefix so a partial number matches.
+  let digits = digitsOnly(trimmed);
   if (digits.startsWith("60")) {
     digits = digits.slice(2);
   } else if (digits.startsWith("0")) {
     digits = digits.slice(1);
   }
-  
+  const phonePattern = digits ? `%${digits}%` : null;
+
+  // Name fragment: anything with a letter is treated as a fuzzy name search.
+  const namePattern = /[a-z]/i.test(trimmed) ? `%${trimmed}%` : null;
+
+  // Match by phone OR name. Exclude the generic placeholder account name so a
+  // name search does not return every unnamed "Referral" record.
   const rows = await runWhatsappAgentSql<{ customer_id: string; name: string | null; phone: string | null }>(
     `
       SELECT
@@ -843,11 +853,14 @@ export async function searchReferrersByPhonePartial(
         c.phone
       FROM customer c
       WHERE c.remark IN ($1, $2)
-        AND regexp_replace(COALESCE(c.phone, ''), '\\D', '', 'g') LIKE $3
+        AND (
+          ($3::text IS NOT NULL AND regexp_replace(COALESCE(c.phone, ''), '\\D', '', 'g') LIKE $3)
+          OR ($4::text IS NOT NULL AND c.name ILIKE $4 AND lower(COALESCE(c.name, '')) <> lower($5))
+        )
       ORDER BY c.created_at DESC NULLS LAST, c.id DESC
-      LIMIT $4
+      LIMIT $6
     `,
-    [REFERRAL_MARKER, LEGACY_REFERRER_MARKER, `%${digits}%`, limit],
+    [REFERRAL_MARKER, LEGACY_REFERRER_MARKER, phonePattern, namePattern, REFERRAL_ACCOUNT_NAME, limit],
   );
 
   return rows.map((row) => ({ customerId: row.customer_id, name: row.name, phone: row.phone }));
