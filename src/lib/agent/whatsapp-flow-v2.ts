@@ -84,12 +84,16 @@ export async function runWhatsappAgentTurnV2(input: {
   const inAdminSession = state.mode.startsWith("admin_");
   const text = input.text.trim();
 
-  if (isAdminModeTrigger(text) && !inAdminSession) {
-    await saveAgentState(input.senderPhone, {
-      ...EMPTY_WHATSAPP_AGENT_STATE,
-      mode: "admin_idle",
-      adminContext: { adminPhone: input.senderPhone },
-    });
+  if (isAdminModeTrigger(text)) {
+    // Enter (or re-acknowledge if already in) admin mode. Always responds so the
+    // keyword never falls through to the LLM as an unknown message.
+    if (!inAdminSession) {
+      await saveAgentState(input.senderPhone, {
+        ...EMPTY_WHATSAPP_AGENT_STATE,
+        mode: "admin_idle",
+        adminContext: { adminPhone: input.senderPhone },
+      });
+    }
     const reply = "[ADMIN MODE]\nAdmin mode activated. Tell me what to do — e.g. 'search referrer 0112...', 'create referrer <name> <phone>', or 'add lead for <phone>'. Reply 'exit' to leave.";
     await recordTurn({ phone: input.senderPhone, registered: false, inbound: input.text, reply, toolTrace: [], startedAt });
     return { reply, toolTrace: [] };
