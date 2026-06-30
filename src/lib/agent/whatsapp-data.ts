@@ -518,8 +518,8 @@ async function sendPreferredAgentNotificationForReferral(
           preferred_agent.name AS agent_name,
           r.name AS lead_name,
           COALESCE(NULLIF(r.mobile_number, ''), lead_customer.phone, '') AS lead_mobile,
-          COALESCE(NULLIF(r.lead_state, ''), lead_customer.state, '') AS lead_state,
-          COALESCE(NULLIF(r.lead_city, ''), lead_customer.city, '') AS lead_city,
+          COALESCE(lead_customer.state, '') AS lead_state,
+          COALESCE(lead_customer.city, '') AS lead_city,
           referrer.name AS referrer_name,
           referrer.phone AS referrer_phone
         FROM referral r
