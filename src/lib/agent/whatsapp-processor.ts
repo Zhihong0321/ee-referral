@@ -8,7 +8,19 @@ import {
   sendWhatsappText,
 } from "@/lib/agent/whatsapp-data";
 import { runWhatsappAgentTurn } from "@/lib/agent/whatsapp-flow";
+import { runWhatsappAgentTurnV2 } from "@/lib/agent/whatsapp-flow-v2";
 import { toCanonicalMalaysiaPhone } from "@/lib/phone-normalization";
+
+/**
+ * V2 (LLM-first) is the live agent flow for everyone.
+ *
+ * It is ON by default — no env var needed. The old deterministic V1 path is
+ * kept only as an emergency kill-switch: set WHATSAPP_AGENT_V2_DISABLED=true
+ * to fall back to V1 without a redeploy.
+ */
+function shouldUseV2(): boolean {
+  return (process.env.WHATSAPP_AGENT_V2_DISABLED || "").trim().toLowerCase() !== "true";
+}
 
 export type WhatsappAgentMessageInput = {
   externalMessageId: string;
@@ -472,7 +484,9 @@ export async function processWhatsappAgentMessages(
         continue;
       }
 
-      const agentResult = await runWhatsappAgentTurn({ senderPhone, text: agentText });
+      const agentResult = shouldUseV2()
+        ? await runWhatsappAgentTurnV2({ senderPhone, text: agentText })
+        : await runWhatsappAgentTurn({ senderPhone, text: agentText });
       const reply = agentResult.reply;
 
       let sendResult: unknown = null;
