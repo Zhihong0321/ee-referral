@@ -11,12 +11,15 @@ import {
   listWhatsappAgents,
   listWhatsappReferrals,
   loadConversation,
+  loadAgentState,
+  saveAgentState,
   resolveOrCreateReferrerByWhatsappPhone,
+  EMPTY_WHATSAPP_AGENT_STATE,
   type ConversationTurn,
   type WhatsappAgentOption,
   type WhatsappReferrerAccount,
 } from "@/lib/agent/whatsapp-data";
-import { isWhatsappSuperAdminPhone } from "@/lib/agent/whatsapp-data";
+import { isAdminModeTrigger, isAdminModeExit } from "@/lib/agent/whatsapp-intent";
 import type { ReferralRow } from "@/lib/referrals";
 import {
   REGULAR_USER_TOOLS,
@@ -74,15 +77,38 @@ export async function runWhatsappAgentTurnV2(input: {
     throw new Error("WHATSAPP_AGENT_LLM_API_KEY (or MINIMAX_API_KEY) is not set.");
   }
 
+  // Admin mode is a stateful session anyone can enter by sending "ee-admin"
+  // and leave with "exit". The flag is persisted in agent state so it survives
+  // across turns, exactly like the original deterministic flow.
+  const state = await loadAgentState(input.senderPhone);
+  const inAdminSession = state.mode.startsWith("admin_");
+  const text = input.text.trim();
+
+  if (isAdminModeTrigger(text) && !inAdminSession) {
+    await saveAgentState(input.senderPhone, {
+      ...EMPTY_WHATSAPP_AGENT_STATE,
+      mode: "admin_idle",
+      adminContext: { adminPhone: input.senderPhone },
+    });
+    const reply = "[ADMIN MODE]\nAdmin mode activated. Tell me what to do — e.g. 'search referrer 0112...', 'create referrer <name> <phone>', or 'add lead for <phone>'. Reply 'exit' to leave.";
+    await recordTurn({ phone: input.senderPhone, registered: false, inbound: input.text, reply, toolTrace: [], startedAt });
+    return { reply, toolTrace: [] };
+  }
+
+  if (isAdminModeExit(text) && inAdminSession) {
+    await saveAgentState(input.senderPhone, { ...EMPTY_WHATSAPP_AGENT_STATE });
+    const reply = "[ADMIN MODE]\nExited admin mode.";
+    await recordTurn({ phone: input.senderPhone, registered: false, inbound: input.text, reply, toolTrace: [], startedAt });
+    return { reply, toolTrace: [] };
+  }
+
   // Load context
   const referrer = await resolveOrCreateReferrerByWhatsappPhone(input.senderPhone);
   const leads = await listWhatsappReferrals(referrer.customerId);
   const agents = await listWhatsappAgents();
   const history = await loadConversation(input.senderPhone);
-  // Real admin gating: only configured super-admin phones get admin tools.
-  // (Previously isAdminAuthorized() returned true for everyone, so the model
-  // role-played admin and fabricated cross-referrer actions.)
-  const isAdmin = isWhatsappSuperAdminPhone(input.senderPhone);
+  // Admin tools are available while the sender is in an admin session.
+  const isAdmin = inAdminSession;
 
   // Build system prompt
   const systemPrompt = buildSystemPrompt(referrer, leads, agents, isAdmin);
