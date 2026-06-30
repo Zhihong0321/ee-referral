@@ -562,6 +562,16 @@ export async function processPendingPreferredAgentNotifications(options: {
   const limit = Math.max(1, Math.min(options.limit || 10, 50));
   const preferredAgentId = options.preferredAgentId?.trim() || null;
 
+  // The legacy outbox table is no longer used (assignments send directly). If it
+  // does not exist, there is nothing to drain — return empty instead of throwing
+  // so the worker/process route keeps running.
+  const tableExists = await runWhatsappAgentSql<{ tbl: string | null }>(
+    `SELECT to_regclass('referral_preferred_agent_notification') AS tbl`,
+  );
+  if (!tableExists[0]?.tbl) {
+    return [];
+  }
+
   const events = await runWhatsappAgentSql<{
     id: string;
     referral_id: number;
@@ -642,13 +652,11 @@ async function dispatchPreferredAgentNotificationForReferral(
   const preferredAgentId = agentId?.trim();
   if (!preferredAgentId) return null;
 
+  // Send the WhatsApp to the agent directly. Best-effort: any failure is caught
+  // and returned as a reason so it never blocks the lead save. (No outbox table
+  // or DB trigger is involved — the assignment sends the message immediately.)
   try {
-    const results = await processPendingPreferredAgentNotifications({
-      limit: 5,
-      referralId,
-      preferredAgentId,
-    });
-    return results.find((result) => result.referralId === referralId && result.agentId === preferredAgentId) || null;
+    return await sendPreferredAgentNotificationForReferral(referralId, preferredAgentId);
   } catch (error) {
     return {
       sent: false,
