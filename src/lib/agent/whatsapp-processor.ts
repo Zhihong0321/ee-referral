@@ -8,7 +8,30 @@ import {
   sendWhatsappText,
 } from "@/lib/agent/whatsapp-data";
 import { runWhatsappAgentTurn } from "@/lib/agent/whatsapp-flow";
+import { runWhatsappAgentTurnV2 } from "@/lib/agent/whatsapp-flow-v2";
 import { toCanonicalMalaysiaPhone } from "@/lib/phone-normalization";
+
+/**
+ * Decide whether a given sender should be served by the LLM-first V2 flow.
+ *
+ * Default OFF — production behavior is unchanged unless explicitly enabled:
+ *   - WHATSAPP_AGENT_V2_ENABLED=true        -> V2 for everyone
+ *   - WHATSAPP_AGENT_V2_PHONES=60xxxx,60yyyy -> V2 only for these numbers
+ * The per-phone allowlist is the safe way to live-test V2 against one number
+ * while everyone else stays on the deterministic V1 path.
+ */
+function shouldUseV2(senderPhone: string): boolean {
+  if ((process.env.WHATSAPP_AGENT_V2_ENABLED || "").trim().toLowerCase() === "true") {
+    return true;
+  }
+  const allow = (process.env.WHATSAPP_AGENT_V2_PHONES || "")
+    .split(",")
+    .map((value) => toCanonicalMalaysiaPhone(value.trim()))
+    .filter(Boolean);
+  if (allow.length === 0) return false;
+  const canonical = toCanonicalMalaysiaPhone(senderPhone);
+  return Boolean(canonical && allow.includes(canonical));
+}
 
 export type WhatsappAgentMessageInput = {
   externalMessageId: string;
@@ -472,7 +495,9 @@ export async function processWhatsappAgentMessages(
         continue;
       }
 
-      const agentResult = await runWhatsappAgentTurn({ senderPhone, text: agentText });
+      const agentResult = shouldUseV2(senderPhone)
+        ? await runWhatsappAgentTurnV2({ senderPhone, text: agentText })
+        : await runWhatsappAgentTurn({ senderPhone, text: agentText });
       const reply = agentResult.reply;
 
       let sendResult: unknown = null;
