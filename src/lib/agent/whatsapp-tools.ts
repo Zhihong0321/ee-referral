@@ -13,6 +13,7 @@
 import {
   createWhatsappReferral,
   updateWhatsappReferral,
+  listWhatsappReferrals,
   listWhatsappAgents,
   searchReferrersByPhonePartial,
   searchReferrerByPhone,
@@ -143,6 +144,30 @@ export const ADMIN_TOOLS = [
       required: ["referrer", "phone"],
     },
   },
+  {
+    name: "admin_get_referrer_leads",
+    description: "List the existing leads belonging to a referrer (identified by phone OR account name), numbered newest first. Use this before assigning an agent to one of their leads.",
+    input_schema: {
+      type: "object",
+      properties: {
+        referrer: { type: "string", description: "The referrer's phone number or account name." },
+      },
+      required: ["referrer"],
+    },
+  },
+  {
+    name: "admin_assign_agent",
+    description: "Assign a sales agent to one of a referrer's EXISTING leads. Identify the referrer by phone or name, the lead by its number from admin_get_referrer_leads, and the agent by name. Call admin_get_referrer_leads first to get the lead number.",
+    input_schema: {
+      type: "object",
+      properties: {
+        referrer: { type: "string", description: "The referrer's phone number or account name." },
+        leadNumber: { type: "number", description: "The lead number from admin_get_referrer_leads." },
+        agentName: { type: "string", description: "The sales agent's name to assign." },
+      },
+      required: ["referrer", "leadNumber", "agentName"],
+    },
+  },
 ];
 
 // ============================================================================
@@ -212,6 +237,10 @@ export async function executeAdminTool(
       return adminCreateReferrer(input, adminPhone);
     case "admin_add_lead":
       return adminAddLead(input);
+    case "admin_get_referrer_leads":
+      return adminGetReferrerLeads(input);
+    case "admin_assign_agent":
+      return adminAssignAgent(input);
     default:
       return { success: false, error: `Unknown admin tool: ${toolName}` };
   }
@@ -646,5 +675,78 @@ async function adminAddLead(input: Record<string, unknown>): Promise<ToolResult>
       agentNotified: result.preferredAgentNotification?.sent ?? false,
     },
     message: `Lead created for ${referrer.name}.`,
+  };
+}
+
+async function adminGetReferrerLeads(input: Record<string, unknown>): Promise<ToolResult> {
+  const referrerQuery = str(input.referrer);
+  if (!referrerQuery) {
+    return { success: false, error: "Referrer phone or name is required." };
+  }
+
+  const resolved = await resolveReferrer(referrerQuery);
+  if (!resolved.success) return resolved;
+  const referrer = resolved.data;
+
+  const leads = await listWhatsappReferrals(referrer.customerId);
+  const formatted = leads.map((lead, idx) => ({
+    number: idx + 1,
+    id: lead.id,
+    name: lead.leadName || "(no name)",
+    phone: lead.leadMobile || "(no phone)",
+    area: [lead.leadState, lead.leadCity].filter(Boolean).join(", ") || "(not provided)",
+    agent: lead.preferredAgentName || "(no agent)",
+    status: lead.status || "Pending",
+  }));
+
+  return {
+    success: true,
+    data: { referrerName: referrer.name, referrerPhone: referrer.phone, total: formatted.length, leads: formatted },
+  };
+}
+
+async function adminAssignAgent(input: Record<string, unknown>): Promise<ToolResult> {
+  const referrerQuery = str(input.referrer);
+  const leadNumber = typeof input.leadNumber === "number" ? input.leadNumber : undefined;
+  const agentName = str(input.agentName);
+
+  if (!referrerQuery) return { success: false, error: "Referrer phone or name is required." };
+  if (!agentName) return { success: false, error: "Agent name is required." };
+
+  const resolved = await resolveReferrer(referrerQuery);
+  if (!resolved.success) return resolved;
+  const referrer = resolved.data;
+
+  const leads = await listWhatsappReferrals(referrer.customerId);
+  if (!leadNumber || leadNumber < 1 || leadNumber > leads.length) {
+    return {
+      success: false,
+      error: `Invalid lead number: ${leadNumber ?? "(none)"}`,
+      hint: leads.length
+        ? `${referrer.name} has ${leads.length} leads. Call admin_get_referrer_leads to see the numbers.`
+        : `${referrer.name} has no leads.`,
+    };
+  }
+
+  const agents = await listWhatsappAgents();
+  const agent = resolveAgentId(agentName, agents);
+  if (!agent.success) return agent;
+
+  const lead = leads[leadNumber - 1];
+  await updateWhatsappReferral(referrer, {
+    referralId: lead.id,
+    field: "preferredAgent",
+    value: agent.data,
+  });
+
+  return {
+    success: true,
+    data: {
+      referrerName: referrer.name,
+      leadNumber,
+      leadName: lead.leadName || "(no name)",
+      agentId: agent.data,
+    },
+    message: `Assigned agent to lead #${leadNumber} (${lead.leadName || "no name"}) for ${referrer.name}.`,
   };
 }

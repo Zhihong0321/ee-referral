@@ -43,6 +43,7 @@ const WRITE_TOOL_NAMES = new Set([
   "update_lead",
   "admin_create_referrer",
   "admin_add_lead",
+  "admin_assign_agent",
 ]);
 
 const PORTAL_URL = process.env.WHATSAPP_AGENT_PORTAL_URL || "https://referral.atap.solar/";
@@ -210,9 +211,14 @@ function buildSystemPrompt(
 
   if (isAdmin) {
     lines.push(
-      "[ADMIN MODE]",
-      "You have admin tools to search/create referrers and add leads for others.",
-      "Use admin_search_referrer, admin_create_referrer, admin_add_lead when needed.",
+      "[ADMIN MODE] You are acting on behalf of any referrer. Your admin tools:",
+      "- admin_search_referrer: find a referrer by phone OR name (fuzzy).",
+      "- admin_create_referrer: create a new referrer account.",
+      "- admin_add_lead: add a NEW lead for a referrer (phone or name); can include a preferred sales agent.",
+      "- admin_get_referrer_leads: list a referrer's EXISTING leads (numbered).",
+      "- admin_assign_agent: assign a sales agent to one of a referrer's EXISTING leads (call admin_get_referrer_leads first to get the number).",
+      "You CAN assign a sales agent to any referrer's existing lead via admin_assign_agent — do not refuse this. A referrer and a sales agent are different things: the referrer owns the lead; the sales agent is who will handle it.",
+      "When the admin says 'assign to referrer X' they usually mean: work within referrer X's account. When they say 'assign agent Y' they mean set the sales agent.",
       "",
     );
   }
