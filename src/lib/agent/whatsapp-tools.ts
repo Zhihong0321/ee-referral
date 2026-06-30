@@ -107,19 +107,19 @@ export const REGULAR_USER_TOOLS = [
 
 export const ADMIN_TOOLS = [
   {
-    name: "admin_search_referrer",
-    description: "Search for a referrer by phone number (partial allowed) OR by account name (fuzzy). Returns matching referrer accounts.",
+    name: "admin_lookup",
+    description: "Look up a referrer by phone number OR account name (fuzzy) and get their existing leads in one call. Returns every matching referrer, each with their numbered leads (and the agent assigned to each). Use this first for any admin task — searching, then adding/assigning uses the same query string.",
     input_schema: {
       type: "object",
       properties: {
-        query: { type: "string", description: "Phone number, partial phone, or referrer name to search for." },
+        query: { type: "string", description: "Phone number, partial phone, or referrer name." },
       },
       required: ["query"],
     },
   },
   {
     name: "admin_create_referrer",
-    description: "Create a new referrer account on behalf of someone. Requires name and phone number.",
+    description: "Create a new referrer account. Requires name and phone number.",
     input_schema: {
       type: "object",
       properties: {
@@ -131,7 +131,7 @@ export const ADMIN_TOOLS = [
   },
   {
     name: "admin_add_lead",
-    description: "Add a lead for a referrer identified by phone number OR account name. The referrer must already exist; if the name/phone matches more than one, you will be asked to disambiguate.",
+    description: "Add a NEW lead for a referrer (identified by phone OR name). Optionally assign a sales agent at the same time. If the referrer query matches more than one account, you will be told to pick one.",
     input_schema: {
       type: "object",
       properties: {
@@ -139,30 +139,19 @@ export const ADMIN_TOOLS = [
         name: { type: "string", description: "Lead's name." },
         phone: { type: "string", description: "Lead's mobile phone number. Required." },
         area: { type: "string", description: "Lead's area or state." },
-        preferredAgentName: { type: "string", description: "Preferred agent name." },
+        preferredAgentName: { type: "string", description: "Sales agent name to assign to this new lead." },
       },
       required: ["referrer", "phone"],
     },
   },
   {
-    name: "admin_get_referrer_leads",
-    description: "List the existing leads belonging to a referrer (identified by phone OR account name), numbered newest first. Use this before assigning an agent to one of their leads.",
-    input_schema: {
-      type: "object",
-      properties: {
-        referrer: { type: "string", description: "The referrer's phone number or account name." },
-      },
-      required: ["referrer"],
-    },
-  },
-  {
     name: "admin_assign_agent",
-    description: "Assign a sales agent to one of a referrer's EXISTING leads. Identify the referrer by phone or name, the lead by its number from admin_get_referrer_leads, and the agent by name. Call admin_get_referrer_leads first to get the lead number.",
+    description: "Assign a sales agent to one of a referrer's EXISTING leads. Use admin_lookup first to get the lead number. Referrer by phone or name, lead by number, agent by name.",
     input_schema: {
       type: "object",
       properties: {
         referrer: { type: "string", description: "The referrer's phone number or account name." },
-        leadNumber: { type: "number", description: "The lead number from admin_get_referrer_leads." },
+        leadNumber: { type: "number", description: "The lead number from admin_lookup." },
         agentName: { type: "string", description: "The sales agent's name to assign." },
       },
       required: ["referrer", "leadNumber", "agentName"],
@@ -231,14 +220,12 @@ export async function executeAdminTool(
   adminPhone: string,
 ): Promise<ToolResult> {
   switch (toolName) {
-    case "admin_search_referrer":
-      return adminSearchReferrer(input);
+    case "admin_lookup":
+      return adminLookup(input);
     case "admin_create_referrer":
       return adminCreateReferrer(input, adminPhone);
     case "admin_add_lead":
       return adminAddLead(input);
-    case "admin_get_referrer_leads":
-      return adminGetReferrerLeads(input);
     case "admin_assign_agent":
       return adminAssignAgent(input);
     default:
@@ -579,21 +566,54 @@ async function updateLead(
 // Admin Tools
 // ============================================================================
 
-async function adminSearchReferrer(input: Record<string, unknown>): Promise<ToolResult> {
+// Combined search: find referrer(s) by phone or name AND return each one's
+// leads in a single call, so the model never has to chain search -> get-leads.
+async function adminLookup(input: Record<string, unknown>): Promise<ToolResult> {
   const query = str(input.query);
   if (!query) {
-    return { success: false, error: "Query is required." };
+    return { success: false, error: "A phone number or referrer name is required." };
   }
 
-  const results = await searchReferrersByPhonePartial(query);
+  // Gather candidate referrers: exact phone match first, then fuzzy phone/name.
+  const found = new Map<string, { customerId: string; name: string | null; phone: string | null }>();
+  const normalizedPhone = toCanonicalMalaysiaPhone(query);
+  if (normalizedPhone) {
+    const exact = await searchReferrerByPhone(normalizedPhone);
+    if (exact) found.set(exact.customerId, { customerId: exact.customerId, name: exact.name, phone: exact.phone });
+  }
+  for (const r of await searchReferrersByPhonePartial(query, 10)) {
+    if (!found.has(r.customerId)) found.set(r.customerId, r);
+  }
+
+  if (found.size === 0) {
+    return {
+      success: false,
+      error: `No referrer found for "${query}".`,
+      hint: "Use admin_create_referrer to create one, or try a different name/phone.",
+    };
+  }
+
+  // For each referrer, attach their numbered leads.
+  const referrers = [];
+  for (const r of found.values()) {
+    const leads = await listWhatsappReferrals(r.customerId);
+    referrers.push({
+      referrerName: r.name || "(no name)",
+      referrerPhone: r.phone || "(no phone)",
+      leadCount: leads.length,
+      leads: leads.map((lead, idx) => ({
+        number: idx + 1,
+        name: lead.leadName || "(no name)",
+        phone: lead.leadMobile || "(no phone)",
+        agent: lead.preferredAgentName || "none",
+        status: lead.status || "Pending",
+      })),
+    });
+  }
 
   return {
     success: true,
-    data: {
-      query,
-      count: results.length,
-      results: results.map((r) => ({ id: r.customerId, name: r.name, phone: r.phone })),
-    },
+    data: { query, matchCount: referrers.length, referrers },
   };
 }
 
@@ -629,7 +649,7 @@ async function adminAddLead(input: Record<string, unknown>): Promise<ToolResult>
     return {
       success: false,
       error: "Referrer phone or name is required.",
-      hint: "Use admin_search_referrer first to find the referrer.",
+      hint: "Use admin_lookup first to find the referrer.",
     };
   }
 
@@ -652,11 +672,13 @@ async function adminAddLead(input: Record<string, unknown>): Promise<ToolResult>
   }
 
   let preferredAgentId: string | undefined;
+  let assignedAgentName = "none";
   if (preferredAgentName) {
     const agents = await listWhatsappAgents();
     const resolved = resolveAgentId(preferredAgentName, agents);
     if (!resolved.success) return resolved;
     preferredAgentId = resolved.data;
+    assignedAgentName = agents.find((a) => a.id === resolved.data)?.name || preferredAgentName;
   }
 
   const result = await createWhatsappReferral(
@@ -665,43 +687,17 @@ async function adminAddLead(input: Record<string, unknown>): Promise<ToolResult>
     { preferredAgentId },
   );
 
+  // Structured result so the reply can clearly state lead / referrer / agent.
   return {
     success: true,
     data: {
-      referralId: result.referralId,
-      referrerName: referrer.name,
-      leadName: name || "(no name)",
+      lead: name || "(no name)",
       leadPhone: normalizedPhone,
+      referrer: referrer.name,
+      assignedAgent: assignedAgentName,
       agentNotified: result.preferredAgentNotification?.sent ?? false,
     },
-    message: `Lead created for ${referrer.name}.`,
-  };
-}
-
-async function adminGetReferrerLeads(input: Record<string, unknown>): Promise<ToolResult> {
-  const referrerQuery = str(input.referrer);
-  if (!referrerQuery) {
-    return { success: false, error: "Referrer phone or name is required." };
-  }
-
-  const resolved = await resolveReferrer(referrerQuery);
-  if (!resolved.success) return resolved;
-  const referrer = resolved.data;
-
-  const leads = await listWhatsappReferrals(referrer.customerId);
-  const formatted = leads.map((lead, idx) => ({
-    number: idx + 1,
-    id: lead.id,
-    name: lead.leadName || "(no name)",
-    phone: lead.leadMobile || "(no phone)",
-    area: [lead.leadState, lead.leadCity].filter(Boolean).join(", ") || "(not provided)",
-    agent: lead.preferredAgentName || "(no agent)",
-    status: lead.status || "Pending",
-  }));
-
-  return {
-    success: true,
-    data: { referrerName: referrer.name, referrerPhone: referrer.phone, total: formatted.length, leads: formatted },
+    message: `Lead added. Lead: ${name || "(no name)"} | Referrer: ${referrer.name} | Agent: ${assignedAgentName}`,
   };
 }
 
@@ -723,7 +719,7 @@ async function adminAssignAgent(input: Record<string, unknown>): Promise<ToolRes
       success: false,
       error: `Invalid lead number: ${leadNumber ?? "(none)"}`,
       hint: leads.length
-        ? `${referrer.name} has ${leads.length} leads. Call admin_get_referrer_leads to see the numbers.`
+        ? `${referrer.name} has ${leads.length} leads. Call admin_lookup to see the numbers.`
         : `${referrer.name} has no leads.`,
     };
   }
@@ -731,6 +727,7 @@ async function adminAssignAgent(input: Record<string, unknown>): Promise<ToolRes
   const agents = await listWhatsappAgents();
   const agent = resolveAgentId(agentName, agents);
   if (!agent.success) return agent;
+  const resolvedAgentName = agents.find((a) => a.id === agent.data)?.name || agentName;
 
   const lead = leads[leadNumber - 1];
   await updateWhatsappReferral(referrer, {
@@ -739,14 +736,15 @@ async function adminAssignAgent(input: Record<string, unknown>): Promise<ToolRes
     value: agent.data,
   });
 
+  // Structured result so the reply can clearly state lead / referrer / agent.
   return {
     success: true,
     data: {
-      referrerName: referrer.name,
-      leadNumber,
-      leadName: lead.leadName || "(no name)",
-      agentId: agent.data,
+      lead: lead.leadName || "(no name)",
+      leadPhone: lead.leadMobile || "(no phone)",
+      referrer: referrer.name,
+      assignedAgent: resolvedAgentName,
     },
-    message: `Assigned agent to lead #${leadNumber} (${lead.leadName || "no name"}) for ${referrer.name}.`,
+    message: `Agent assigned. Lead: ${lead.leadName || "(no name)"} | Referrer: ${referrer.name} | Agent: ${resolvedAgentName}`,
   };
 }

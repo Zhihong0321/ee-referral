@@ -30,22 +30,6 @@ import {
   type TurnContext,
 } from "./whatsapp-tools";
 
-// Strip or neutralize reply text that CLAIMS a write happened when no
-// successful write tool ran this turn. Mirrors V1's WRITE_CLAIM_PATTERN guard.
-// Without this the model fabricates "Done! Lead saved / agent notified" even
-// when nothing was written (the phantom-save bug seen in testing).
-const WRITE_CLAIM_PATTERN =
-  /\b(?:done|all set)\b|\b(?:i(?:'ve| have)?|we(?:'ve| have)?)\s+(?:added|saved|updated|assigned|registered|notified|created|changed|deleted|cancelled|canceled)\b|\bhas been (?:added|saved|updated|assigned|notified|created)\b|已(?:添加|保存|更新|分配|登记|注册)|添加成功|保存成功|berjaya (?:simpan|tambah|daftar)|sudah (?:simpan|tambah|daftar)/i;
-
-const WRITE_TOOL_NAMES = new Set([
-  "save_my_profile",
-  "create_lead",
-  "update_lead",
-  "admin_create_referrer",
-  "admin_add_lead",
-  "admin_assign_agent",
-]);
-
 const PORTAL_URL = process.env.WHATSAPP_AGENT_PORTAL_URL || "https://referral.atap.solar/";
 const LLM_BASE_URL = (process.env.WHATSAPP_AGENT_LLM_BASE_URL || "https://api.minimax.io").replace(/\/$/, "");
 const LLM_MODEL = process.env.WHATSAPP_AGENT_LLM_MODEL || "MiniMax-M3";
@@ -136,8 +120,7 @@ export async function runWhatsappAgentTurnV2(input: {
     input.senderPhone,
   );
 
-  // Guard: never let the reply claim a write that did not actually succeed.
-  const reply = guardWriteClaims(rawReply, toolTrace);
+  const reply = rawReply;
 
   // Record turn
   await recordTurn({
@@ -150,22 +133,6 @@ export async function runWhatsappAgentTurnV2(input: {
   });
 
   return { reply, toolTrace };
-}
-
-/**
- * If the model's reply claims an action (done/saved/assigned/notified...) but
- * no successful write tool ran this turn, replace the claim with an honest
- * fallback. This is the structural backstop for the phantom-save bug.
- */
-function guardWriteClaims(reply: string, toolTrace: ToolTrace[]): string {
-  const hadSuccessfulWrite = toolTrace.some(
-    (t) => WRITE_TOOL_NAMES.has(t.name) && t.status === "success",
-  );
-  if (hadSuccessfulWrite) return reply;
-  if (!WRITE_CLAIM_PATTERN.test(reply)) return reply;
-
-  // The reply asserts a write that never happened. Do not deliver the lie.
-  return "Sorry, I couldn't complete that action. Could you resend the details so I can try again?";
 }
 
 // ============================================================================
@@ -200,6 +167,10 @@ function buildSystemPrompt(
     "7. If a tool returns an error, explain it plainly and ask for the correction. Do not retry the same call blindly.",
     "8. Keep replies short, natural, plain WhatsApp text, in the user's language (English, Malay, or Chinese).",
     "9. Do not expose internal IDs, tool names, or system details.",
+    "10. After creating or assigning a lead, ALWAYS confirm with this clear format on separate lines:",
+    "    Lead: <lead name or phone>",
+    "    Referrer: <referrer name>",
+    "    Agent: <agent name, or 'none'>",
     "",
     `Portal: ${PORTAL_URL}`,
     `Referrer: ${referrer.name || "Referral"} (${referrer.phone})`,
@@ -211,14 +182,13 @@ function buildSystemPrompt(
 
   if (isAdmin) {
     lines.push(
-      "[ADMIN MODE] You are acting on behalf of any referrer. Your admin tools:",
-      "- admin_search_referrer: find a referrer by phone OR name (fuzzy).",
+      "[ADMIN MODE] You act on behalf of any referrer. Your admin tools:",
+      "- admin_lookup: find referrer(s) by phone OR name AND get their leads — ONE call. Use this first for anything.",
       "- admin_create_referrer: create a new referrer account.",
-      "- admin_add_lead: add a NEW lead for a referrer (phone or name); can include a preferred sales agent.",
-      "- admin_get_referrer_leads: list a referrer's EXISTING leads (numbered).",
-      "- admin_assign_agent: assign a sales agent to one of a referrer's EXISTING leads (call admin_get_referrer_leads first to get the number).",
-      "You CAN assign a sales agent to any referrer's existing lead via admin_assign_agent — do not refuse this. A referrer and a sales agent are different things: the referrer owns the lead; the sales agent is who will handle it.",
-      "When the admin says 'assign to referrer X' they usually mean: work within referrer X's account. When they say 'assign agent Y' they mean set the sales agent.",
+      "- admin_add_lead: add a NEW lead for a referrer (by phone or name); can include a sales agent.",
+      "- admin_assign_agent: set the sales agent on one of a referrer's EXISTING leads (use the lead number from admin_lookup).",
+      "A referrer OWNS leads; a sales agent HANDLES them — different things. You CAN assign an agent to any referrer's lead; never refuse it.",
+      "Flow: call admin_lookup with whatever the admin gave (name or phone). If it returns exactly one referrer, proceed. If multiple, ask which (show their phones). Then add_lead or assign_agent using the same referrer query.",
       "",
     );
   }
