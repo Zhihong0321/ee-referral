@@ -398,28 +398,30 @@ async function prepareWhatsappInboundForAgent(message: WhatsappAgentMessageInput
     };
   }
 
-  if (messageType === "image" && mediaUrl) {
-    try {
-      const converted = await describeWhatsappVisual(mediaUrl, "image", text);
-      return { text: `[System: User sent an image. Extracted content:]\n${converted}` };
-    } catch (error) {
+  if (messageType === "image" || messageType === "video") {
+    const kind = messageType;
+    if (!mediaUrl) {
+      // No media URL yet — this can happen if the message row was claimed
+      // before the ingestion service finished uploading/hosting the
+      // attachment. Silently falling through to an empty string here (the
+      // old behavior) meant the turn ran with NO signal that anything was
+      // sent, and the model would sometimes reach into unrelated older
+      // history to fill the gap. Always say so explicitly instead, mirroring
+      // the voice-note "no transcript is available" pattern below.
       return {
-        text: `[System: User sent an image. Conversion failed: ${error instanceof Error ? error.message : "unknown error"}.]\n` +
+        text: `[System: User sent a${kind === "image" ? "n" : ""} ${kind}, but no media URL was available yet.]\n` +
               (text ? `Caption: ${text}\n` : "") +
-              "Instruct the AI Agent to reply exactly with: '( Image failed to read ), can you write in text?'",
+              `Instruct the AI Agent to reply exactly with: '( ${kind === "image" ? "Image" : "Video"} not received yet ), please resend it.'`,
       };
     }
-  }
-
-  if (messageType === "video" && mediaUrl) {
     try {
-      const converted = await describeWhatsappVisual(mediaUrl, "video", text);
-      return { text: `[System: User sent a video. Extracted content:]\n${converted}` };
+      const converted = await describeWhatsappVisual(mediaUrl, kind, text);
+      return { text: `[System: User sent a${kind === "image" ? "n" : ""} ${kind}. Extracted content:]\n${converted}` };
     } catch (error) {
       return {
-        text: `[System: User sent a video. Conversion failed: ${error instanceof Error ? error.message : "unknown error"}.]\n` +
+        text: `[System: User sent a${kind === "image" ? "n" : ""} ${kind}. Conversion failed: ${error instanceof Error ? error.message : "unknown error"}.]\n` +
               (text ? `Caption: ${text}\n` : "") +
-              "Instruct the AI Agent to reply exactly with: '( Video failed to read ), can you write in text?'",
+              `Instruct the AI Agent to reply exactly with: '( ${kind === "image" ? "Image" : "Video"} failed to read ), can you write in text?'`,
       };
     }
   }

@@ -72,6 +72,25 @@ export type WhatsappAgentState = {
     targetReferrerSearchResults?: Array<{ customerId: string; name: string | null; phone: string | null }>;
     newReferrerName?: string;
     pendingLead?: WhatsappLeadDraft & { preferredAgentText?: string };
+    /**
+     * Deterministic, timestamped capture of the last lead-like data (image
+     * OCR, contact card, explicit text) seen in THIS admin session. Unlike
+     * WhatsappEntityLedger, this is written from raw inbound text (via
+     * parseLeadCandidate), not from a successful tool result — admin mode
+     * has no equivalent of "THEIR LEADS" to ground a vague "this lead"
+     * reference against, so without a short freshness window the model can
+     * (and did, in production) reach back into old conversation history and
+     * present a day-old image extraction as if it were just sent. Expires
+     * after ADMIN_PENDING_LEAD_TTL_MS — short by design, just long enough to
+     * cover the immediate clarification back-and-forth after one image.
+     */
+    pendingLeadCapture?: {
+      leadName: string;
+      leadMobileNumber: string;
+      area: string;
+      preferredAgentText: string;
+      capturedAt: string;
+    };
   };
 };
 
@@ -1356,6 +1375,19 @@ export async function listUnrepliedWhatsappInboundMessages(limit = 10, lookbackM
         AND BTRIM(inbound.external_message_id) <> ''
         AND inbound.message_type IN ('text', 'conversation', 'extendedTextMessage', 'audio', 'ptt', 'image', 'video', 'document', 'sticker', 'contact', 'contacts', 'contactMessage', 'contactsArrayMessage')
         AND inbound.created_at >= NOW() - ($2::int * INTERVAL '1 minute')
+        -- Give an image/video row a brief grace period if its media_url isn't
+        -- populated yet (the ingestion service may still be uploading the
+        -- attachment) so the next poll can pick it up once it's ready,
+        -- instead of processing it with no media reference. After 20s a
+        -- still-missing media_url is treated as genuinely stuck and
+        -- processed anyway — prepareWhatsappInboundForAgent then replies
+        -- with an explicit "please resend" instead of leaving the admin
+        -- with no clear signal at all.
+        AND (
+          inbound.message_type NOT IN ('image', 'video')
+          OR inbound.media_url IS NOT NULL
+          OR inbound.created_at < NOW() - INTERVAL '20 seconds'
+        )
         AND NOT EXISTS (
           SELECT 1
           FROM et_messages outbound

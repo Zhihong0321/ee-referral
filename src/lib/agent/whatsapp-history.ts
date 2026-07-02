@@ -16,6 +16,39 @@ export type ModelContentBlock =
 export type ModelMessage = { role: "user" | "assistant"; content: string | ModelContentBlock[] };
 
 const SYSTEM_TURN_PATTERN = /^\[System:/i;
+const CONTACT_CARD_PATTERN = /^WhatsApp contact cards? received:/i;
+const LEAD_FIELD_PATTERN = /\b(?:Lead name|Lead phone)\s*:/i;
+
+// The model is a stateless completion call — it has no notion of "now" or of
+// when any past message was sent unless we tell it explicitly. Without this,
+// requests like "the lead I sent yesterday" or "remind me tomorrow" have
+// nothing to reason from and the model silently guesses.
+export const AGENT_TIMEZONE = "Asia/Kuala_Lumpur";
+
+const TIMESTAMP_FORMATTER = new Intl.DateTimeFormat("en-MY", {
+  timeZone: AGENT_TIMEZONE,
+  year: "numeric",
+  month: "short",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
+
+export function formatAgentTimestamp(value: string | Date): string {
+  const date = typeof value === "string" ? new Date(value) : value;
+  if (Number.isNaN(date.getTime())) return "";
+  return `${TIMESTAMP_FORMATTER.format(date)} (${AGENT_TIMEZONE})`;
+}
+
+// Per-history-line variant: the timezone is stated once in the "Current
+// date/time" system prompt line, so repeating it on every turn would just
+// burn tokens for no added information.
+function formatHistoryTimestamp(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return TIMESTAMP_FORMATTER.format(date);
+}
 
 /**
  * Media inbound (image OCR, voice transcript, contact card failure notices) is
@@ -27,8 +60,23 @@ const SYSTEM_TURN_PATTERN = /^\[System:/i;
  *
  * Instead, distill them: keep the extracted entity details as a compact user
  * line, strip only the "[System: ...]" header and bot-facing instructions.
+ *
+ * opts.redactLeadFields (admin mode only): admin mode has no per-referrer
+ * lead list to ground "this lead" against, so a fully-detailed old lead
+ * sitting in history is an un-vetted path for the model to invent
+ * transaction state from conversation text — the deterministic
+ * pendingLeadCapture channel (surfaced as PENDING LEAD DATA in the system
+ * prompt) exists specifically to replace that path. When set, strip
+ * reusable lead fields (name/phone/area) out of PAST image and contact-card
+ * turns so the model can only source them from the current turn or that
+ * dedicated channel, never by reaching back into an older, possibly
+ * unrelated capture.
  */
-export function distillHistoryTurnText(text: string): string {
+export function distillHistoryTurnText(text: string, opts?: { redactLeadFields?: boolean }): string {
+  if (opts?.redactLeadFields && CONTACT_CARD_PATTERN.test(text)) {
+    return "(sent a contact card — details not retained in history; use PENDING LEAD DATA or ask the admin to resend)";
+  }
+
   if (!SYSTEM_TURN_PATTERN.test(text)) return text;
 
   if (/(failed|No transcript is available)/i.test(text)) {
@@ -42,16 +90,28 @@ export function distillHistoryTurnText(text: string): string {
     .join("\n")
     .trim();
 
+  if (opts?.redactLeadFields && LEAD_FIELD_PATTERN.test(body)) {
+    return `(sent ${mediaKind} with possible lead details — no longer available here; use PENDING LEAD DATA or ask the admin to resend)`;
+  }
+
   return body ? `(sent ${mediaKind}) ${body}` : `(sent ${mediaKind})`;
 }
 
-export function cleanMessages(history: ConversationTurnLike[], currentMessage: string): ModelMessage[] {
+export function cleanMessages(
+  history: ConversationTurnLike[],
+  currentMessage: string,
+  opts?: { redactLeadFields?: boolean },
+): ModelMessage[] {
   const recentHistory = history
     .slice(-20)
-    .map<ModelMessage>((turn) => ({
-      role: turn.role,
-      content: distillHistoryTurnText(turn.text),
-    }));
+    .map<ModelMessage>((turn) => {
+      const distilled = distillHistoryTurnText(turn.text, opts);
+      const timestamp = turn.time ? formatHistoryTimestamp(turn.time) : "";
+      return {
+        role: turn.role,
+        content: timestamp ? `[${timestamp}] ${distilled}` : distilled,
+      };
+    });
 
   const combined = [...recentHistory, { role: "user" as const, content: currentMessage }];
   const messages: ModelMessage[] = [];

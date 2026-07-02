@@ -18,7 +18,7 @@ import {
   type WhatsappEntityLedger,
   type WhatsappReferrerAccount,
 } from "@/lib/agent/whatsapp-data";
-import { isAdminModeTrigger, isAdminModeExit } from "@/lib/agent/whatsapp-intent";
+import { isAdminModeTrigger, isAdminModeExit, isCancelMessage, parseLeadCandidate } from "@/lib/agent/whatsapp-intent";
 import type { ReferralRow } from "@/lib/referrals";
 import {
   REGULAR_USER_TOOLS,
@@ -30,6 +30,7 @@ import {
 } from "./whatsapp-tools";
 import {
   cleanMessages,
+  formatAgentTimestamp,
   formatLeadStateLines,
   type ModelContentBlock,
   type ModelMessage,
@@ -52,6 +53,28 @@ function freshEntityLedger(ledger: WhatsappEntityLedger | undefined): WhatsappEn
   if (!ledger?.updatedAt) return undefined;
   const age = Date.now() - new Date(ledger.updatedAt).getTime();
   return Number.isFinite(age) && age >= 0 && age <= ENTITY_LEDGER_TTL_MS ? ledger : undefined;
+}
+
+// Admin mode has no "THEIR LEADS" list to ground a vague "this lead" against
+// (the target referrer varies per request), so a pending lead capture must
+// expire fast — long enough to survive the immediate clarification
+// back-and-forth after one image, short enough that "yesterday's lead" can
+// never resurface as if it were just sent. This is what was missing when a
+// day-old image extraction got presented as the current one in production.
+const ADMIN_PENDING_LEAD_TTL_MS = 15 * 60 * 1000;
+
+type AdminPendingLeadCapture = {
+  leadName: string;
+  leadMobileNumber: string;
+  area: string;
+  preferredAgentText: string;
+  capturedAt: string;
+};
+
+function freshPendingLeadCapture(capture: AdminPendingLeadCapture | undefined): AdminPendingLeadCapture | undefined {
+  if (!capture?.capturedAt) return undefined;
+  const age = Date.now() - new Date(capture.capturedAt).getTime();
+  return Number.isFinite(age) && age >= 0 && age <= ADMIN_PENDING_LEAD_TTL_MS ? capture : undefined;
 }
 
 /**
@@ -157,12 +180,48 @@ export async function runWhatsappAgentTurnV2(input: {
   const leads = isAdmin ? [] : await listWhatsappReferrals(referrer.customerId);
   const history = await loadConversation(input.senderPhone);
 
+  // Admin-mode pending-lead capture: deterministic, derived from the RAW
+  // inbound text (image OCR, contact card, explicit text), not from a tool
+  // result — this is what lets the CURRENT turn's image data ground a
+  // following "add this lead" without the model reaching into old history.
+  // A cancel/reset message clears it explicitly; otherwise it carries
+  // forward from state, subject to the freshness check below.
+  let pendingLeadCapture = state.adminContext?.pendingLeadCapture;
+  if (isAdmin) {
+    const parsed = parseLeadCandidate(input.text);
+    // A media turn is any image/video/contact-card delivery, whether OCR
+    // succeeded, failed, or found no lead details — recognized by the
+    // wrapper prepareWhatsappInboundForAgent always attaches. Receiving one
+    // is itself a signal the admin's attention has moved to a NEW item, even
+    // when it yields no lead fields, so it must not leave an older, unrelated
+    // capture sitting there to be misattributed to whatever this new item
+    // turns out to be. Without this, a follow-up image with no lead data
+    // (e.g. a forwarded Maps screenshot) silently left the previous lead
+    // capture intact, and the next "add this lead" pulled in that stale,
+    // unrelated lead instead of failing loudly.
+    const isMediaTurn = /\[System:\s*User sent an? (?:image|video)\b/i.test(input.text) || /WhatsApp contact card/i.test(input.text);
+    if (parsed?.leadMobileNumber) {
+      pendingLeadCapture = {
+        leadName: parsed.leadName,
+        leadMobileNumber: parsed.leadMobileNumber,
+        area: parsed.area,
+        preferredAgentText: parsed.preferredAgentText,
+        capturedAt: new Date().toISOString(),
+      };
+    } else if (isCancelMessage(text) || isMediaTurn) {
+      pendingLeadCapture = undefined;
+    }
+  }
+  const freshPendingLead = isAdmin ? freshPendingLeadCapture(pendingLeadCapture) : undefined;
+
   // Build system prompt (with the still-fresh entity ledger, if any)
   const ledger = freshEntityLedger(state.entityLedger);
-  const systemPrompt = buildSystemPrompt(referrer, leads, isAdmin, ledger);
+  const systemPrompt = buildSystemPrompt(referrer, leads, isAdmin, ledger, freshPendingLead);
 
-  // Build messages
-  const messages = cleanMessages(history, input.text);
+  // Build messages. Admin mode redacts reusable lead fields out of PAST
+  // media turns (see distillHistoryTurnText) so the model can't reach into
+  // history for lead data instead of the current turn or PENDING LEAD DATA.
+  const messages = cleanMessages(history, input.text, { redactLeadFields: isAdmin });
 
   // One TurnContext per turn enforces "look before you leap" across tool calls.
   // The system prompt already lists this turn's leads (same order/numbering as
@@ -187,13 +246,27 @@ export async function runWhatsappAgentTurnV2(input: {
 
   const reply = rawReply;
 
-  // Persist the updated entity ledger (deterministic, from tool results only).
+  // A successful admin_add_lead consumed the pending capture — clear it so a
+  // later "add this lead" can't reuse an already-added one.
+  if (isAdmin && toolTrace.some((t) => t.name === "admin_add_lead" && t.status === "success")) {
+    pendingLeadCapture = undefined;
+  }
+
+  // Persist the updated entity ledger (deterministic, from tool results
+  // only) and the admin pending-lead capture (deterministic, from raw
+  // inbound text) in one write so neither clobbers the other.
   const updatedLedger = deriveEntityLedger(toolTrace, ledger);
-  if (updatedLedger && updatedLedger !== ledger) {
+  const ledgerChanged = updatedLedger && updatedLedger !== ledger;
+  const pendingChanged = isAdmin && pendingLeadCapture !== state.adminContext?.pendingLeadCapture;
+  if (ledgerChanged || pendingChanged) {
     try {
-      await saveAgentState(input.senderPhone, { ...state, entityLedger: updatedLedger });
+      await saveAgentState(input.senderPhone, {
+        ...state,
+        entityLedger: updatedLedger,
+        adminContext: isAdmin ? { ...state.adminContext, adminPhone: input.senderPhone, pendingLeadCapture } : state.adminContext,
+      });
     } catch (err) {
-      console.error("Failed to save entity ledger:", err);
+      console.error("Failed to save entity ledger / pending lead capture:", err);
     }
   }
 
@@ -219,11 +292,18 @@ function buildSystemPrompt(
   leads: ReferralRow[],
   isAdmin: boolean,
   ledger?: WhatsappEntityLedger,
+  pendingLead?: { leadName: string; leadMobileNumber: string; area: string; preferredAgentText: string; capturedAt: string },
 ): string {
   const lines = [
     `You are the WhatsApp Referral Assistant for ${COMPANY_LEGAL_NAME}.`,
     "",
     "You help referrers manage their solar installation referral leads.",
+    "",
+    // The model has no built-in sense of "now" — without this line it cannot
+    // reason about relative dates ("tomorrow", "last week") or judge how old
+    // a captured lead or history turn is. History turns below are prefixed
+    // with their own [timestamp] for the same reason.
+    `Current date/time: ${formatAgentTimestamp(new Date())}. Use this for any relative date/time reasoning ("today", "tomorrow", "how long ago").`,
     "",
     "THREE DIFFERENT ROLES — never mix them up:",
     isAdmin
@@ -249,6 +329,8 @@ function buildSystemPrompt(
       "    Lead: <lead name or phone>",
       "    Referrer: <referrer name>",
       "    Agent: <agent name, or 'none'>",
+      "7. When the admin says something like 'add this lead' / 'add it' without giving details in that same message, use PENDING LEAD DATA below if present — never pull lead details from earlier in the conversation history instead. If there is no pending lead data, say so plainly and ask the admin to resend the image or type the lead's details — do not guess from an older message, even one that looks like a similar request.",
+      "8. Recency rule: this is a human conversation, not a database of equally-valid facts — when two messages describe the same lead/detail differently (a corrected phone number, a changed area, a different preferred agent), the MOST RECENT one is the truth; people correct themselves, they don't hold two facts at once. Only treat an older message as authoritative when the admin explicitly says so (e.g. 'no, use the first one'). This does not override rule 7 — PENDING LEAD DATA (or its absence) still wins over anything in history for a bare 'add this lead'.",
       "",
       "YOUR ADMIN TOOLS:",
       "- admin_lookup: find referrer(s) by phone OR name AND get their numbered leads — ONE call. Use this first for anything.",
@@ -259,6 +341,10 @@ function buildSystemPrompt(
       "",
       "=== CURRENT SESSION ===",
       `ADMIN: ${referrer.name || "Referral"} (${referrer.phone}). Their own referral account is off-limits while in admin mode.`,
+      "",
+      pendingLead
+        ? `PENDING LEAD DATA (captured ${pendingLead.capturedAt} from the most recent image/message — use this, and only this, for a bare "add this lead" request): Name: ${pendingLead.leadName || "(not provided)"} | Phone: ${pendingLead.leadMobileNumber} | Area: ${pendingLead.area || "(not provided)"} | Preferred agent mentioned: ${pendingLead.preferredAgentText || "(none)"}`
+        : "PENDING LEAD DATA: none currently captured. If the admin asks to add \"this lead\" without giving details right now, tell them there's nothing pending and ask them to resend the image or type the details.",
       "",
       "PROGRAM INFO:",
       PROGRAM_KNOWLEDGE,
@@ -290,6 +376,7 @@ function buildSystemPrompt(
     "    Lead: <lead name or phone>",
     "    Referrer: <referrer name>",
     "    Agent: <agent name, or 'none'>",
+    "11. Recency rule: this is a human conversation, not a database of equally-valid facts — when two messages give conflicting details for the same lead (a corrected phone number, a different area, a changed preferred agent), the MOST RECENT one is the truth; people correct themselves, they don't hold two facts at once. Only treat an older message as authoritative when the user explicitly says so (e.g. 'no, use the first one').",
     "",
     `Portal: ${PORTAL_URL}`,
     "",
