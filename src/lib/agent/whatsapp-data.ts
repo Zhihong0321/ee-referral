@@ -1,5 +1,5 @@
 import { PROJECT_TYPE_OPTIONS, RELATIONSHIP_OPTIONS, type ProjectTypeOption, type ReferralRow, type RelationshipOption } from "@/lib/referrals";
-import { buildPhoneMatchCandidates, digitsOnly, toCanonicalMalaysiaPhone } from "@/lib/phone-normalization";
+import { toCanonicalMalaysiaPhone, toPhoneMatchKey } from "@/lib/phone-normalization";
 import { query } from "@/lib/db";
 
 const DEFAULT_TENANT_ID = 1;
@@ -7,6 +7,24 @@ const REFERRAL_MARKER = "REFERRAL_ACCOUNT";
 const LEGACY_REFERRER_MARKER = "REFERRER_ACCOUNT";
 const REFERRAL_ACCOUNT_NAME = "Referral";
 const APP_ACTOR = "whatsapp_agent";
+
+// Normalizes customer.phone (DB side) to the "national significant number" —
+// digits only, country code / leading zero stripped — so lookups match
+// regardless of legacy formatting noise (spaces, dashes, +, 60-vs-0 prefix
+// inconsistency). Must stay in sync with toPhoneMatchKey()'s JS-side logic.
+// Every phone lookup in this file uses this ONE definition of "same phone" —
+// previously searchReferrerByPhone/resolveOrCreateReferrerByWhatsappPhone did
+// exact-string matching against un-normalized DB values (silently failing on
+// any legacy row with stray formatting), while only the fuzzy admin search
+// normalized the DB side. That split caused real referrers to become
+// unfindable by phone and get duplicate accounts created under them.
+const PHONE_MATCH_KEY_SQL = `(CASE
+    WHEN regexp_replace(COALESCE(c.phone, ''), '\\D', '', 'g') LIKE '60%'
+      THEN substring(regexp_replace(COALESCE(c.phone, ''), '\\D', '', 'g') FROM 3)
+    WHEN regexp_replace(COALESCE(c.phone, ''), '\\D', '', 'g') LIKE '0%'
+      THEN substring(regexp_replace(COALESCE(c.phone, ''), '\\D', '', 'g') FROM 2)
+    ELSE regexp_replace(COALESCE(c.phone, ''), '\\D', '', 'g')
+  END)`;
 
 /**
  * Deterministic memory of the entities the V2 agent last worked on. Written
@@ -683,36 +701,29 @@ async function dispatchPreferredAgentNotificationForReferral(
 }
 
 export async function resolveOrCreateReferrerByWhatsappPhone(senderPhone: string): Promise<WhatsappReferrerAccount> {
-  const candidates = buildPhoneMatchCandidates(senderPhone);
-  const values = candidates.map((candidate) => candidate.value);
+  const matchKey = toPhoneMatchKey(senderPhone);
 
-  const rows = await runWhatsappAgentSql<ReferrerRow>(
-    `
-      WITH candidates AS (
-        SELECT value, rank, ordinality::int AS match_index
-        FROM unnest($1::text[], $2::int[]) WITH ORDINALITY AS c(value, rank, ordinality)
+  const rows = matchKey
+    ? await runWhatsappAgentSql<ReferrerRow>(
+        `
+          SELECT
+            c.customer_id,
+            c.name,
+            c.phone,
+            c.notes,
+            lower(COALESCE(NULLIF(c.name, ''), $4)) = lower($4) AS is_generic_name
+          FROM customer c
+          WHERE c.remark IN ($1, $2)
+            AND ${PHONE_MATCH_KEY_SQL} = $3
+          ORDER BY
+            is_generic_name ASC,
+            c.created_at ASC NULLS LAST,
+            c.id ASC
+          LIMIT 1
+        `,
+        [REFERRAL_MARKER, LEGACY_REFERRER_MARKER, matchKey, REFERRAL_ACCOUNT_NAME],
       )
-      SELECT
-        c.customer_id,
-        c.name,
-        c.phone,
-        c.notes,
-        candidates.rank AS match_rank,
-        candidates.match_index,
-        lower(COALESCE(NULLIF(c.name, ''), $5)) = lower($5) AS is_generic_name
-      FROM customer c
-      JOIN candidates ON c.phone = candidates.value
-      WHERE c.remark IN ($3, $4)
-      ORDER BY
-        candidates.rank ASC,
-        candidates.match_index ASC,
-        is_generic_name ASC,
-        c.created_at ASC NULLS LAST,
-        c.id ASC
-      LIMIT 1
-    `,
-    [values, candidates.map((candidate) => candidate.rank), REFERRAL_MARKER, LEGACY_REFERRER_MARKER, REFERRAL_ACCOUNT_NAME],
-  );
+    : [];
 
   if (rows[0]) {
     return buildReferrerAccount(rows[0], senderPhone);
@@ -805,35 +816,27 @@ export async function saveReferrerProfile(
 }
 
 export async function searchReferrerByPhone(phone: string): Promise<WhatsappReferrerAccount | null> {
-  const candidates = buildPhoneMatchCandidates(phone);
-  const values = candidates.map((candidate) => candidate.value);
+  const matchKey = toPhoneMatchKey(phone);
+  if (!matchKey) return null;
 
   const rows = await runWhatsappAgentSql<ReferrerRow>(
     `
-      WITH candidates AS (
-        SELECT value, rank, ordinality::int AS match_index
-        FROM unnest($1::text[], $2::int[]) WITH ORDINALITY AS c(value, rank, ordinality)
-      )
       SELECT
         c.customer_id,
         c.name,
         c.phone,
         c.notes,
-        candidates.rank AS match_rank,
-        candidates.match_index,
-        lower(COALESCE(NULLIF(c.name, ''), $5)) = lower($5) AS is_generic_name
+        lower(COALESCE(NULLIF(c.name, ''), $4)) = lower($4) AS is_generic_name
       FROM customer c
-      JOIN candidates ON c.phone = candidates.value
-      WHERE c.remark IN ($3, $4)
+      WHERE c.remark IN ($1, $2)
+        AND ${PHONE_MATCH_KEY_SQL} = $3
       ORDER BY
-        candidates.rank ASC,
-        candidates.match_index ASC,
         is_generic_name ASC,
         c.created_at ASC NULLS LAST,
         c.id ASC
       LIMIT 1
     `,
-    [values, candidates.map((candidate) => candidate.rank), REFERRAL_MARKER, LEGACY_REFERRER_MARKER, REFERRAL_ACCOUNT_NAME],
+    [REFERRAL_MARKER, LEGACY_REFERRER_MARKER, matchKey, REFERRAL_ACCOUNT_NAME],
   );
 
   if (!rows[0]) return null;
@@ -848,12 +851,7 @@ export async function searchReferrersByPhonePartial(
   if (!trimmed) return [];
 
   // Phone fragment: strip a Malaysia prefix so a partial number matches.
-  let digits = digitsOnly(trimmed);
-  if (digits.startsWith("60")) {
-    digits = digits.slice(2);
-  } else if (digits.startsWith("0")) {
-    digits = digits.slice(1);
-  }
+  const digits = toPhoneMatchKey(trimmed);
   const phonePattern = digits ? `%${digits}%` : null;
 
   // Name fragment: anything with a letter is treated as a fuzzy name search.
@@ -1037,22 +1035,17 @@ export async function listAllWhatsappReferrals(limit = 30) {
 }
 
 export async function listWhatsappReferralsByReferrerPhone(phone: string, limit = 30) {
-  const candidates = buildPhoneMatchCandidates(phone);
-  const values = candidates.map((candidate) => candidate.value);
-  const ranks = candidates.map((candidate) => candidate.rank);
+  const matchKey = toPhoneMatchKey(phone);
+  if (!matchKey) return [];
 
   const rows = await runWhatsappAgentSql<AdminReferralSelectRow>(
     `
-      WITH candidates AS (
-        SELECT value, rank, ordinality::int AS match_index
-        FROM unnest($1::text[], $2::int[]) WITH ORDINALITY AS c(value, rank, ordinality)
-      ),
-      matched_referrer AS (
+      WITH matched_referrer AS (
         SELECT c.customer_id, c.name, c.phone
         FROM customer c
-        JOIN candidates ON c.phone = candidates.value
-        WHERE c.remark IN ($3, $4)
-        ORDER BY candidates.rank ASC, candidates.match_index ASC, c.created_at ASC NULLS LAST, c.id ASC
+        WHERE c.remark IN ($1, $2)
+          AND ${PHONE_MATCH_KEY_SQL} = $3
+        ORDER BY c.created_at ASC NULLS LAST, c.id ASC
         LIMIT 1
       )
       SELECT
@@ -1082,9 +1075,9 @@ export async function listWhatsappReferralsByReferrerPhone(phone: string, limit 
       LEFT JOIN customer c ON c.customer_id = r.linked_invoice
       LEFT JOIN "user" preferred_agent ON preferred_agent.id::text = r.linked_agent
       ORDER BY r.created_at DESC NULLS LAST, r.id DESC
-      LIMIT $5
+      LIMIT $4
     `,
-    [values, ranks, REFERRAL_MARKER, LEGACY_REFERRER_MARKER, limit],
+    [REFERRAL_MARKER, LEGACY_REFERRER_MARKER, matchKey, limit],
   );
 
   return rows.map(mapAdminReferral);

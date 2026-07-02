@@ -264,14 +264,55 @@ function str(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
+function tokenNGrams(tokens: string[], n: number): string[] {
+  const grams: string[] = [];
+  for (let i = 0; i + n <= tokens.length; i++) grams.push(tokens.slice(i, i + n).join(" "));
+  return grams;
+}
+
+/**
+ * Two normalized name strings "collide" if they share a distinctive core —
+ * a contiguous 2+ token phrase, or a single token of 4+ characters when
+ * either side is single-token. Deliberately NOT "every token must match" or
+ * plain substring containment: real names carry titles/prefixes/suffixes
+ * that don't overlap ("Uncle Eu Jin" vs "Au Yong Eu Jin" still collide on
+ * "eu jin"; a query already resolved to the full canonical name, e.g.
+ * "Au Yong Eu Jin", must still collide with a lead named just "Eu Jin" even
+ * though neither string contains the other outright).
+ */
+function namesShareIdentity(a: string, b: string): boolean {
+  const tokensA = a.split(" ").filter(Boolean);
+  const tokensB = b.split(" ").filter(Boolean);
+  if (!tokensA.length || !tokensB.length) return false;
+  if (a === b) return true;
+  const gramsA = new Set(tokenNGrams(tokensA, 2));
+  if (tokenNGrams(tokensB, 2).some((g) => gramsA.has(g))) return true;
+  if (tokensA.length === 1 || tokensB.length === 1) {
+    return tokensA.some((t) => t.length >= 4 && tokensB.includes(t));
+  }
+  return false;
+}
+
 /**
  * Resolve a sales-agent name to a single agent id, or return a tool error
  * describing why it could not be resolved (missing / none / ambiguous).
  *
- * When `leads` is provided (regular-user tools), a non-exact match that ALSO
- * matches one of this referrer's lead names is refused: the same name in two
- * roles is exactly the confusion that corrupted leads in production. The
- * escape hatch is the agent's exact full name, which always resolves.
+ * When `leads` is provided (regular-user tools), a match that ALSO matches
+ * one of this referrer's lead names is refused: the same name in two roles
+ * is exactly the confusion that corrupted leads in production. This check
+ * runs regardless of whether the agent name matched exactly — the model can
+ * reach an "exact" value either because the user typed the full unambiguous
+ * name, or because it called search_agents on an ambiguous fragment first
+ * and passed back the resolved full name. This tool has no way to tell those
+ * two cases apart from the string alone, so it can't afford to trust either
+ * one differently.
+ *
+ * The collision check compares against BOTH the raw query and the resolved
+ * agent's canonical name — comparing only the query missed the case where
+ * the model already resolved "Eu Jin" to "Au Yong Eu Jin" before calling
+ * this, since the full name no longer substring-matches a lead named just
+ * "Eu Jin". namesShareIdentity() catches that via shared-phrase overlap
+ * instead of requiring one string to literally contain the other.
  */
 function resolveAgentId(
   name: string,
@@ -282,18 +323,18 @@ function resolveAgentId(
   if (match.status === "matched") {
     const agentName = match.matches[0].name;
     const query = normalizeComparableText(name);
-    const exact = query === normalizeComparableText(agentName);
+    const normalizedAgentName = normalizeComparableText(agentName);
 
-    if (!exact && leads?.length) {
+    if (leads?.length) {
       const collidingLead = leads.find((lead) => {
         const leadName = normalizeComparableText(lead.leadName || "");
-        return Boolean(leadName) && (leadName === query || leadName.includes(query) || query.includes(leadName));
+        return Boolean(leadName) && (namesShareIdentity(leadName, query) || namesShareIdentity(leadName, normalizedAgentName));
       });
       if (collidingLead) {
         return {
           success: false,
           error: `"${name}" could be the sales agent ${agentName} OR the lead "${collidingLead.leadName}".`,
-          hint: `Ask the user which they mean, naming both: sales agent ${agentName}, or their lead ${collidingLead.leadName}. If they confirm the sales agent, call again with the full name "${agentName}".`,
+          hint: `Ask the user which they mean, naming both: sales agent ${agentName}, or their lead ${collidingLead.leadName}. This referrer has both — confirm before calling again.`,
         };
       }
     }
