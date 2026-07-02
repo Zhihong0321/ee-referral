@@ -68,6 +68,7 @@ type AdminPendingLeadCapture = {
   leadMobileNumber: string;
   area: string;
   preferredAgentText: string;
+  remark: string;
   capturedAt: string;
 };
 
@@ -206,6 +207,7 @@ export async function runWhatsappAgentTurnV2(input: {
         leadMobileNumber: parsed.leadMobileNumber,
         area: parsed.area,
         preferredAgentText: parsed.preferredAgentText,
+        remark: parsed.remark,
         capturedAt: new Date().toISOString(),
       };
     } else if (isCancelMessage(text) || isMediaTurn) {
@@ -292,7 +294,7 @@ function buildSystemPrompt(
   leads: ReferralRow[],
   isAdmin: boolean,
   ledger?: WhatsappEntityLedger,
-  pendingLead?: { leadName: string; leadMobileNumber: string; area: string; preferredAgentText: string; capturedAt: string },
+  pendingLead?: { leadName: string; leadMobileNumber: string; area: string; preferredAgentText: string; remark: string; capturedAt: string },
 ): string {
   const lines = [
     `You are the WhatsApp Referral Assistant for ${COMPANY_LEGAL_NAME}.`,
@@ -335,7 +337,7 @@ function buildSystemPrompt(
       "YOUR ADMIN TOOLS:",
       "- admin_lookup: find referrer(s) by phone OR name AND get their numbered leads — ONE call. Use this first for anything.",
       "- admin_create_referrer: create a new referrer account.",
-      "- admin_add_lead: add a NEW lead for a referrer (by phone or name); can include a sales agent.",
+      "- admin_add_lead: add a NEW lead for a referrer (by phone or name); can include a sales agent and a free-text remark.",
       "- admin_assign_agent: set the sales agent on one of a referrer's EXISTING leads (use the lead number from admin_lookup).",
       "A referrer OWNS leads; a sales agent HANDLES them — different things. You CAN assign an agent to any other referrer's lead; never refuse it.",
       "",
@@ -343,7 +345,7 @@ function buildSystemPrompt(
       `ADMIN: ${referrer.name || "Referral"} (${referrer.phone}). Their own referral account is off-limits while in admin mode.`,
       "",
       pendingLead
-        ? `PENDING LEAD DATA (captured ${pendingLead.capturedAt} from the most recent image/message — use this, and only this, for a bare "add this lead" request): Name: ${pendingLead.leadName || "(not provided)"} | Phone: ${pendingLead.leadMobileNumber} | Area: ${pendingLead.area || "(not provided)"} | Preferred agent mentioned: ${pendingLead.preferredAgentText || "(none)"}`
+        ? `PENDING LEAD DATA (captured ${pendingLead.capturedAt} from the most recent image/message — use this, and only this, for a bare "add this lead" request): Name: ${pendingLead.leadName || "(not provided)"} | Phone: ${pendingLead.leadMobileNumber} | Area: ${pendingLead.area || "(not provided)"} | Preferred agent mentioned: ${pendingLead.preferredAgentText || "(none)"} | Remark/notes: ${pendingLead.remark || "(none)"}`
         : "PENDING LEAD DATA: none currently captured. If the admin asks to add \"this lead\" without giving details right now, tell them there's nothing pending and ask them to resend the image or type the details.",
       "",
       "PROGRAM INFO:",
@@ -359,6 +361,7 @@ function buildSystemPrompt(
     "- Answer questions about the referral program",
     "- Help referrers save their profile (name, bank account)",
     "- Create, update, and cancel leads",
+    "- Attach an optional free-text remark/note to a lead (e.g. best time to call, what they're interested in)",
     "- Assign preferred sales agents to leads",
     "- List and check lead status",
     "",
@@ -368,7 +371,7 @@ function buildSystemPrompt(
     "3. Never claim you did something unless that tool returned success:true. If a tool returned success:false, tell the user it did NOT happen.",
     "4. To UPDATE a lead, use the exact lead number shown in THEIR LEADS below (or from get_my_leads this turn). Never guess a lead number. After creating a lead in this turn, call get_my_leads before any update — the numbering changes.",
     "5. New details (a fresh phone number from text, an image, or a contact card) are a NEW lead -> use create_lead. Only use update_lead when the user explicitly refers to an existing lead by its number. Never overwrite an existing lead with a different person's details.",
-    "6. To create a lead with a sales agent, pass salesAgentName to create_lead in ONE call. Do not create then assign by number.",
+    "6. To create a lead with a sales agent, pass salesAgentName to create_lead in ONE call. Do not create then assign by number. If the user volunteers extra context about the lead (best time to call, what they want, how they know them), pass it as remark — do not silently drop it.",
     "7. If a tool returns an error, explain it plainly and ask for the correction. Do not retry the same call blindly.",
     "8. Keep replies short, natural, plain WhatsApp text, in the user's language (English, Malay, or Chinese).",
     "9. Do not expose internal IDs, tool names, or system details. Never volunteer a list of sales agents; confirm names one at a time via search_agents.",

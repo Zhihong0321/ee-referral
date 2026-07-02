@@ -136,6 +136,7 @@ export type LeadStateLike = {
   leadCity: string | null;
   preferredAgentName: string | null;
   status: string | null;
+  remark?: string | null;
 };
 
 /**
@@ -149,7 +150,8 @@ export function formatLeadStateLines(leads: LeadStateLike[], cap = 20): string[]
 
   const lines = leads.slice(0, cap).map((lead, idx) => {
     const area = [lead.leadState, lead.leadCity].map((value) => value?.trim()).filter(Boolean).join(", ");
-    return `  ${idx + 1}. Lead "${lead.leadName || "(no name)"}" — ${lead.leadMobile || "no phone"}${area ? ` — ${area}` : ""} — sales agent: ${lead.preferredAgentName || "none"} — ${lead.status || "Pending"}`;
+    const remark = lead.remark?.trim();
+    return `  ${idx + 1}. Lead "${lead.leadName || "(no name)"}" — ${lead.leadMobile || "no phone"}${area ? ` — ${area}` : ""} — sales agent: ${lead.preferredAgentName || "none"} — ${lead.status || "Pending"}${remark ? ` — remark: "${remark}"` : ""}`;
   });
 
   if (leads.length > cap) {

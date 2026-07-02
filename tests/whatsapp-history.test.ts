@@ -132,6 +132,16 @@ test("formats the numbered lead state block", () => {
   assert.match(lines[1], /2\. Lead "\(no name\)" — 60161112222 — sales agent: GAN ZHI HONG — Won/);
 });
 
+test("appends the remark to a lead line when present, omits it when absent", () => {
+  const lines = formatLeadStateLines([
+    { leadName: "Ali", leadMobile: "60177788899", leadState: "Penang", leadCity: null, preferredAgentName: null, status: "Pending", remark: "Call after 6pm" },
+    { leadName: "Kumar", leadMobile: "60161112222", leadState: null, leadCity: null, preferredAgentName: null, status: "Pending", remark: null },
+  ]);
+
+  assert.match(lines[0], /remark: "Call after 6pm"$/);
+  assert.doesNotMatch(lines[1], /remark:/);
+});
+
 test("caps the lead state block and says how many were hidden", () => {
   const many = Array.from({ length: 25 }, (_, i) => ({
     leadName: `L${i + 1}`,

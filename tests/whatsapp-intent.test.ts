@@ -20,6 +20,7 @@ test("parses referral details extracted from an image", () => {
       leadMobileNumber: "017-260 4102",
       area: "Taman Sungai Besi, Kuala Lumpur",
       preferredAgentText: "",
+      remark: "Photography studio",
       source: "structured_media",
     },
   );
@@ -31,6 +32,14 @@ test("ignores OCR placeholders for a missing preferred agent", () => {
   );
   assert.equal(parsed?.preferredAgentText, "");
   assert.equal(parsed?.leadMobileNumber, "018-963 8220");
+  assert.equal(parsed?.remark, "manufacturer");
+});
+
+test("ignores an OCR placeholder for missing notes", () => {
+  const parsed = parseLeadCandidate(
+    "[System: User sent an image. Extracted content:]\nLead name: Iconbag KL | Lead phone: 018-963 8220 | Notes: None visible",
+  );
+  assert.equal(parsed?.remark, "");
 });
 
 test("parses an explicit text lead without requiring an AI decision", () => {
@@ -50,6 +59,7 @@ test("parses a WhatsApp contact card", () => {
       leadMobileNumber: "+60 12-333 4444",
       area: "",
       preferredAgentText: "",
+      remark: "",
       source: "structured_media",
     },
   );

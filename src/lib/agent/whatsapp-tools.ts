@@ -6,8 +6,9 @@
  * return structured success/error results so the LLM can recover from mistakes.
  *
  * IMPORTANT: The underlying data layer only supports lead name, mobile number,
- * and area (state). It does NOT store lead email or a separate city, and there
- * is no delete/cancel-lead operation. Tools below reflect that reality exactly.
+ * area (state), and a free-text remark. It does NOT store lead email or a
+ * separate city, and there is no delete/cancel-lead operation. Tools below
+ * reflect that reality exactly.
  */
 
 import {
@@ -74,13 +75,14 @@ export const REGULAR_USER_TOOLS = [
   },
   {
     name: "create_lead",
-    description: "Create a new referral lead. Requires a mobile phone number. Optionally include the lead's name, area, and the sales agent who should handle it.",
+    description: "Create a new referral lead. Requires a mobile phone number. Optionally include the lead's name, area, a free-text remark/note, and the sales agent who should handle it.",
     input_schema: {
       type: "object",
       properties: {
         name: { type: "string", description: "The LEAD's name (the person being referred) — never the referrer's or a sales agent's name." },
         phone: { type: "string", description: "Lead's mobile phone number (Malaysia format). Required." },
         area: { type: "string", description: "Lead's area or state (e.g. Selangor)." },
+        remark: { type: "string", description: "Optional free-text note about the lead — e.g. best time to call, what they're interested in, how they were referred. Use when the user volunteers extra context beyond name/phone/area." },
         salesAgentName: { type: "string", description: "Name of the SALES AGENT who should handle this lead (company staff, not the lead)." },
       },
       required: ["phone"],
@@ -95,8 +97,8 @@ export const REGULAR_USER_TOOLS = [
         leadNumber: { type: "number", description: "The lead number (1, 2, 3...) as shown in THEIR LEADS or get_my_leads." },
         field: {
           type: "string",
-          enum: ["name", "phone", "area", "salesAgent"],
-          description: "Which field to update. 'salesAgent' changes who HANDLES the lead.",
+          enum: ["name", "phone", "area", "salesAgent", "remark"],
+          description: "Which field to update. 'salesAgent' changes who HANDLES the lead. 'remark' replaces the lead's free-text note.",
         },
         value: { type: "string", description: "New value. For salesAgent, pass the sales agent's name." },
       },
@@ -139,6 +141,7 @@ export const ADMIN_TOOLS = [
         name: { type: "string", description: "Lead's name." },
         phone: { type: "string", description: "Lead's mobile phone number. Required." },
         area: { type: "string", description: "Lead's area or state." },
+        remark: { type: "string", description: "Optional free-text note about the lead." },
         preferredAgentName: { type: "string", description: "Sales agent name to assign to this new lead." },
       },
       required: ["referrer", "phone"],
@@ -423,6 +426,7 @@ function getMyLeads(leads: ReferralRow[]): ToolResult {
     leadName: lead.leadName || "(no name)",
     leadPhone: lead.leadMobile || "(no phone)",
     area: [lead.leadState, lead.leadCity].filter(Boolean).join(", ") || "(not provided)",
+    remark: lead.remark || "(none)",
     salesAgentName: lead.preferredAgentName || "(not assigned)",
     status: lead.status || "Pending",
     createdAt: lead.createdAt,
@@ -495,6 +499,7 @@ async function createLead(
   const name = str(input.name);
   const phone = str(input.phone);
   const area = str(input.area) || "";
+  const remark = str(input.remark) || "";
   // salesAgentName is the current key; preferredAgentName kept one release for compatibility.
   const salesAgentName = str(input.salesAgentName) || str(input.preferredAgentName);
 
@@ -542,7 +547,7 @@ async function createLead(
 
   const result = await createWhatsappReferral(
     referrer,
-    { leadName: name || "", leadMobileNumber: normalizedPhone, area },
+    { leadName: name || "", leadMobileNumber: normalizedPhone, area, remark },
     { preferredAgentId },
   );
 
@@ -552,6 +557,7 @@ async function createLead(
       referralId: result.referralId,
       leadName: name || "(no name)",
       leadPhone: normalizedPhone,
+      remark: remark || "(none)",
       salesAgentName: assignedAgentName,
       agentNotified: result.preferredAgentNotification?.sent ?? false,
     },
@@ -612,7 +618,7 @@ async function updateLead(
   }
 
   // Map the friendly field name to the data layer's update field + value.
-  let updateField: "leadName" | "leadMobileNumber" | "area" | "preferredAgent";
+  let updateField: "leadName" | "leadMobileNumber" | "area" | "preferredAgent" | "remark";
   let updateValue = value;
 
   switch (field) {
@@ -631,6 +637,9 @@ async function updateLead(
     case "area":
       updateField = "area";
       break;
+    case "remark":
+      updateField = "remark";
+      break;
     case "salesAgent": {
       updateField = "preferredAgent";
       // Exclude the lead being reassigned from the collision check: assigning
@@ -645,7 +654,7 @@ async function updateLead(
       return {
         success: false,
         error: `Unsupported field: ${field}`,
-        hint: "Supported fields: name, phone, area, salesAgent.",
+        hint: "Supported fields: name, phone, area, salesAgent, remark.",
       };
   }
 
@@ -721,6 +730,7 @@ async function adminLookup(input: Record<string, unknown>, adminPhone: string): 
         number: idx + 1,
         name: lead.leadName || "(no name)",
         phone: lead.leadMobile || "(no phone)",
+        remark: lead.remark || "(none)",
         agent: lead.preferredAgentName || "none",
         status: lead.status || "Pending",
       })),
@@ -784,6 +794,7 @@ async function adminAddLead(input: Record<string, unknown>, adminPhone: string):
   const name = str(input.name);
   const phone = str(input.phone);
   const area = str(input.area) || "";
+  const remark = str(input.remark) || "";
   const preferredAgentName = str(input.preferredAgentName);
 
   if (!phone) {
@@ -807,7 +818,7 @@ async function adminAddLead(input: Record<string, unknown>, adminPhone: string):
 
   const result = await createWhatsappReferral(
     referrer,
-    { leadName: name || "", leadMobileNumber: normalizedPhone, area },
+    { leadName: name || "", leadMobileNumber: normalizedPhone, area, remark },
     { preferredAgentId },
   );
 
@@ -817,6 +828,7 @@ async function adminAddLead(input: Record<string, unknown>, adminPhone: string):
     data: {
       lead: name || "(no name)",
       leadPhone: normalizedPhone,
+      remark: remark || "(none)",
       referrer: referrer.name,
       assignedAgent: assignedAgentName,
       agentNotified: result.preferredAgentNotification?.sent ?? false,

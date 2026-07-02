@@ -89,6 +89,7 @@ export type WhatsappAgentState = {
       leadMobileNumber: string;
       area: string;
       preferredAgentText: string;
+      remark: string;
       capturedAt: string;
     };
   };
@@ -101,11 +102,12 @@ export type WhatsappLeadDraft = {
   leadName: string;
   leadMobileNumber: string;
   area: string;
+  remark?: string;
 };
 
 export type WhatsappLeadField = keyof WhatsappLeadDraft;
 
-export type WhatsappUpdateField = "leadName" | "leadMobileNumber" | "area" | "preferredAgent";
+export type WhatsappUpdateField = "leadName" | "leadMobileNumber" | "area" | "preferredAgent" | "remark";
 
 export type WhatsappUpdateDraft = {
   referralId: number;
@@ -1115,6 +1117,7 @@ export async function createWhatsappReferral(
   const defaultRelationship = "Other";
   const defaultProjectType = "OTHERS";
   const area = draft.area?.trim() || "";
+  const remark = draft.remark?.trim() || "";
   const metadata = JSON.stringify({
     relationship: defaultRelationship,
     projectType: defaultProjectType,
@@ -1122,6 +1125,7 @@ export async function createWhatsappReferral(
     leadCity: "",
     leadAddress: "",
     area,
+    remark,
     linkedReferrer: referrer.customerId,
     syncedFromReferralPortal: true,
     createdAt: new Date().toISOString(),
@@ -1203,6 +1207,12 @@ export async function updateWhatsappReferral(
     leadMobileNumber: { referralColumn: "mobile_number", customerColumn: "phone" },
     area: { customerColumn: "state", noteKey: "leadState" },
     preferredAgent: { referralColumn: "linked_agent" },
+    // No direct DB column — mapReferral() reads remark from notes.remark
+    // (the customer.remark column itself is an unrelated referrer-link
+    // marker, not free text). Empty string is a valid value here (clearing
+    // an existing remark), unlike other fields where update.value is
+    // required truthy.
+    remark: { noteKey: "remark" },
   };
   const mapping = fieldMap[update.field];
 

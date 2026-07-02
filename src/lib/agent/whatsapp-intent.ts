@@ -3,6 +3,7 @@ export type ParsedLeadCandidate = {
   leadMobileNumber: string;
   area: string;
   preferredAgentText: string;
+  remark: string;
   source: "structured_media" | "explicit_text";
   referrerPhone?: string;
 };
@@ -120,6 +121,7 @@ export function parseLeadCandidate(text: string): ParsedLeadCandidate | null {
       leadMobileNumber: phone,
       area: "",
       preferredAgentText: "",
+      remark: "",
       source: "structured_media",
     };
   }
@@ -137,6 +139,7 @@ export function parseLeadCandidate(text: string): ParsedLeadCandidate | null {
       leadMobileNumber: phone,
       area: labeledValue(text, "Area"),
       preferredAgentText: optionalLabeledValue(text, "Preferred agent"),
+      remark: optionalLabeledValue(text, "Notes"),
       source: "structured_media",
     };
   }
@@ -155,6 +158,7 @@ export function parseLeadCandidate(text: string): ParsedLeadCandidate | null {
     leadMobileNumber: phone,
     area: cleanValue(areaMatch?.[1] || ""),
     preferredAgentText: extractAssignmentText(text),
+    remark: "",
     source: "explicit_text",
   };
 }
