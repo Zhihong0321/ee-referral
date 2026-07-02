@@ -23,7 +23,7 @@ import {
   type WhatsappAgentOption,
 } from "./whatsapp-data";
 import { toCanonicalMalaysiaPhone } from "@/lib/phone-normalization";
-import { matchAgentName } from "./whatsapp-intent";
+import { matchAgentName, normalizeComparableText } from "./whatsapp-intent";
 import type { ReferralRow } from "@/lib/referrals";
 
 // ============================================================================
@@ -74,31 +74,31 @@ export const REGULAR_USER_TOOLS = [
   },
   {
     name: "create_lead",
-    description: "Create a new referral lead. Requires a mobile phone number. Optionally include name, area, and a preferred agent.",
+    description: "Create a new referral lead. Requires a mobile phone number. Optionally include the lead's name, area, and the sales agent who should handle it.",
     input_schema: {
       type: "object",
       properties: {
-        name: { type: "string", description: "Lead's name." },
+        name: { type: "string", description: "The LEAD's name (the person being referred) — never the referrer's or a sales agent's name." },
         phone: { type: "string", description: "Lead's mobile phone number (Malaysia format). Required." },
         area: { type: "string", description: "Lead's area or state (e.g. Selangor)." },
-        preferredAgentName: { type: "string", description: "Name of the preferred sales agent to assign." },
+        salesAgentName: { type: "string", description: "Name of the SALES AGENT who should handle this lead (company staff, not the lead)." },
       },
       required: ["phone"],
     },
   },
   {
     name: "update_lead",
-    description: "Update one field of an existing lead by its number from get_my_leads. Call once per field to change.",
+    description: "Update one field of an existing lead by its number from THEIR LEADS / get_my_leads. Call once per field to change.",
     input_schema: {
       type: "object",
       properties: {
-        leadNumber: { type: "number", description: "The lead number (1, 2, 3...) from get_my_leads." },
+        leadNumber: { type: "number", description: "The lead number (1, 2, 3...) as shown in THEIR LEADS or get_my_leads." },
         field: {
           type: "string",
-          enum: ["name", "phone", "area", "preferredAgent"],
-          description: "Which field to update.",
+          enum: ["name", "phone", "area", "salesAgent"],
+          description: "Which field to update. 'salesAgent' changes who HANDLES the lead.",
         },
-        value: { type: "string", description: "New value. For preferredAgent, pass the agent's name." },
+        value: { type: "string", description: "New value. For salesAgent, pass the sales agent's name." },
       },
       required: ["leadNumber", "field", "value"],
     },
@@ -247,12 +247,39 @@ function str(value: unknown): string | undefined {
 }
 
 /**
- * Resolve a preferred-agent name to a single agent id, or return a tool error
+ * Resolve a sales-agent name to a single agent id, or return a tool error
  * describing why it could not be resolved (missing / none / ambiguous).
+ *
+ * When `leads` is provided (regular-user tools), a non-exact match that ALSO
+ * matches one of this referrer's lead names is refused: the same name in two
+ * roles is exactly the confusion that corrupted leads in production. The
+ * escape hatch is the agent's exact full name, which always resolves.
  */
-function resolveAgentId(name: string, agents: WhatsappAgentOption[]): ToolResult<string> {
+function resolveAgentId(
+  name: string,
+  agents: WhatsappAgentOption[],
+  leads?: ReferralRow[],
+): ToolResult<string> {
   const match = matchAgentName(name, agents);
   if (match.status === "matched") {
+    const agentName = match.matches[0].name;
+    const query = normalizeComparableText(name);
+    const exact = query === normalizeComparableText(agentName);
+
+    if (!exact && leads?.length) {
+      const collidingLead = leads.find((lead) => {
+        const leadName = normalizeComparableText(lead.leadName || "");
+        return Boolean(leadName) && (leadName === query || leadName.includes(query) || query.includes(leadName));
+      });
+      if (collidingLead) {
+        return {
+          success: false,
+          error: `"${name}" could be the sales agent ${agentName} OR the lead "${collidingLead.leadName}".`,
+          hint: `Ask the user which they mean, naming both: sales agent ${agentName}, or their lead ${collidingLead.leadName}. If they confirm the sales agent, call again with the full name "${agentName}".`,
+        };
+      }
+    }
+
     return { success: true, data: match.matches[0].id };
   }
   if (match.status === "ambiguous") {
@@ -322,8 +349,8 @@ function getMyProfile(referrer: WhatsappReferrerAccount, leads: ReferralRow[]): 
   return {
     success: true,
     data: {
-      name: referrer.name || "(not set)",
-      phone: referrer.phone,
+      referrerName: referrer.name || "(not set)",
+      referrerPhone: referrer.phone,
       bankAccount: referrer.bankAccount || "(not set)",
       registered: referrer.registered,
       totalLeads: leads.length,
@@ -334,11 +361,10 @@ function getMyProfile(referrer: WhatsappReferrerAccount, leads: ReferralRow[]): 
 function getMyLeads(leads: ReferralRow[]): ToolResult {
   const formatted = leads.map((lead, idx) => ({
     number: idx + 1,
-    id: lead.id,
-    name: lead.leadName || "(no name)",
-    phone: lead.leadMobile || "(no phone)",
+    leadName: lead.leadName || "(no name)",
+    leadPhone: lead.leadMobile || "(no phone)",
     area: [lead.leadState, lead.leadCity].filter(Boolean).join(", ") || "(not provided)",
-    preferredAgent: lead.preferredAgentName || "(not assigned)",
+    salesAgentName: lead.preferredAgentName || "(not assigned)",
     status: lead.status || "Pending",
     createdAt: lead.createdAt,
   }));
@@ -366,7 +392,7 @@ function searchAgents(input: Record<string, unknown>, agents: WhatsappAgentOptio
     data: {
       query,
       status: match.status,
-      matches: match.matches.map((a) => ({ id: a.id, name: a.name })),
+      agents: match.matches.map((a) => ({ role: "sales_agent", agentName: a.name })),
     },
   };
 }
@@ -410,7 +436,8 @@ async function createLead(
   const name = str(input.name);
   const phone = str(input.phone);
   const area = str(input.area) || "";
-  const preferredAgentName = str(input.preferredAgentName);
+  // salesAgentName is the current key; preferredAgentName kept one release for compatibility.
+  const salesAgentName = str(input.salesAgentName) || str(input.preferredAgentName);
 
   if (!phone) {
     return {
@@ -445,11 +472,14 @@ async function createLead(
   }
 
   let preferredAgentId: string | undefined;
-  if (preferredAgentName) {
-    const resolved = resolveAgentId(preferredAgentName, agents);
+  if (salesAgentName) {
+    const resolved = resolveAgentId(salesAgentName, agents, leads);
     if (!resolved.success) return resolved;
     preferredAgentId = resolved.data;
   }
+  const assignedAgentName = preferredAgentId
+    ? agents.find((a) => a.id === preferredAgentId)?.name || salesAgentName || "none"
+    : "none";
 
   const result = await createWhatsappReferral(
     referrer,
@@ -461,12 +491,13 @@ async function createLead(
     success: true,
     data: {
       referralId: result.referralId,
-      name: name || "(no name)",
-      phone: normalizedPhone,
+      leadName: name || "(no name)",
+      leadPhone: normalizedPhone,
+      salesAgentName: assignedAgentName,
       agentNotified: result.preferredAgentNotification?.sent ?? false,
     },
     message: preferredAgentId
-      ? "Lead created and preferred agent notified."
+      ? "Lead created and the sales agent was notified."
       : "Lead created.",
   };
 }
@@ -500,7 +531,9 @@ async function updateLead(
     };
   }
 
-  const field = str(input.field);
+  const rawField = str(input.field);
+  // "salesAgent" is the current name; "preferredAgent" kept one release for compatibility.
+  const field = rawField === "preferredAgent" ? "salesAgent" : rawField;
   const value = str(input.value);
   if (!field || !value) {
     return { success: false, error: "Both field and value are required." };
@@ -539,9 +572,12 @@ async function updateLead(
     case "area":
       updateField = "area";
       break;
-    case "preferredAgent": {
+    case "salesAgent": {
       updateField = "preferredAgent";
-      const resolved = resolveAgentId(value, agents);
+      // Exclude the lead being reassigned from the collision check: assigning
+      // an agent TO lead "Ali" legitimately references that lead's own name.
+      const otherLeads = leads.filter((other) => other.id !== lead.id);
+      const resolved = resolveAgentId(value, agents, otherLeads);
       if (!resolved.success) return resolved;
       updateValue = resolved.data;
       break;
@@ -550,7 +586,7 @@ async function updateLead(
       return {
         success: false,
         error: `Unsupported field: ${field}`,
-        hint: "Supported fields: name, phone, area, preferredAgent.",
+        hint: "Supported fields: name, phone, area, salesAgent.",
       };
   }
 
@@ -562,7 +598,14 @@ async function updateLead(
 
   return {
     success: true,
-    data: { leadNumber, field, leadId: lead.id },
+    data: {
+      leadNumber,
+      field,
+      referralId: lead.id,
+      leadName: field === "name" ? value : lead.leadName || "(no name)",
+      leadPhone: field === "phone" ? updateValue : lead.leadMobile || "",
+      salesAgentName: field === "salesAgent" ? agents.find((a) => a.id === updateValue)?.name || value : undefined,
+    },
     message: `Lead #${leadNumber} ${field} updated.`,
   };
 }

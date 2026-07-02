@@ -87,6 +87,41 @@ test("matches a short agent name to the configured full name", () => {
   }
 });
 
+test("exact token match beats prefix match instead of tying into ambiguity", () => {
+  const result = matchAgentName("ali", [
+    { id: "1", name: "ALI HASSAN" },
+    { id: "2", name: "ALIA WONG" },
+  ]);
+  assert.equal(result.status, "matched");
+  assert.equal(result.matches[0]?.name, "ALI HASSAN");
+});
+
+test("rejects fragments that are too short to trust", () => {
+  const result = matchAgentName("al", [
+    { id: "1", name: "ALI HASSAN" },
+    { id: "2", name: "ALIA WONG" },
+  ]);
+  assert.equal(result.status, "none");
+});
+
+test("same-score candidates stay ambiguous so the agent must ask", () => {
+  const result = matchAgentName("gan", [
+    { id: "1", name: "GAN ZHI HONG" },
+    { id: "2", name: "GAN LAI HOCK" },
+  ]);
+  assert.equal(result.status, "ambiguous");
+  assert.equal(result.matches.length, 2);
+});
+
+test("finds the agent when the full name is buried in a longer sentence", () => {
+  const result = matchAgentName("please let zhi hong follow up", [
+    { id: "1", name: "GAN ZHI HONG" },
+    { id: "2", name: "GAN LAI HOCK" },
+  ]);
+  assert.equal(result.status, "matched");
+  assert.equal(result.matches[0]?.name, "GAN ZHI HONG");
+});
+
 test("recognizes skip and cancellation messages", () => {
   assert.equal(isSkipMessage("skip"), true);
   assert.equal(isSkipMessage("no preferred agent"), true);

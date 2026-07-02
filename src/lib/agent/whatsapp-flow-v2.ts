@@ -169,7 +169,7 @@ function buildSystemPrompt(
     "3. Never claim you did something unless that tool returned success:true. If a tool returned success:false, tell the user it did NOT happen.",
     "4. To UPDATE a lead, use the exact lead number shown in THEIR LEADS below (or from get_my_leads this turn). Never guess a lead number. After creating a lead in this turn, call get_my_leads before any update — the numbering changes.",
     "5. New details (a fresh phone number from text, an image, or a contact card) are a NEW lead -> use create_lead. Only use update_lead when the user explicitly refers to an existing lead by its number. Never overwrite an existing lead with a different person's details.",
-    "6. To create a lead with a preferred agent, pass preferredAgentName to create_lead in ONE call. Do not create then assign by number.",
+    "6. To create a lead with a sales agent, pass salesAgentName to create_lead in ONE call. Do not create then assign by number.",
     "7. If a tool returns an error, explain it plainly and ask for the correction. Do not retry the same call blindly.",
     "8. Keep replies short, natural, plain WhatsApp text, in the user's language (English, Malay, or Chinese).",
     "9. Do not expose internal IDs, tool names, or system details. Never volunteer a list of sales agents; confirm names one at a time via search_agents.",

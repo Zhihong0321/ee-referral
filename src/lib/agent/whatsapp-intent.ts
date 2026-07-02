@@ -34,23 +34,49 @@ export function normalizeComparableText(value: string) {
     .trim();
 }
 
+/**
+ * Resolve a free-text name against the agent roster. Deliberately stricter
+ * than plain substring matching: with ~150 agents, a 2-3 character fragment
+ * silently "matching" some agent turned wrong-slot names into wrong writes.
+ * Ranking (best wins; ties -> ambiguous):
+ *   100 exact full name
+ *    90 every query token is an exact token of the name ("zhi hong" -> GAN ZHI HONG)
+ *    85 the full agent name appears inside a longer query text
+ *    80 compact containment, but only for queries of 4+ characters ("zhihong")
+ *    70 every query token (3+ chars) is a prefix of a name token ("ali" -> ALIA)
+ *  else count of exact 3+ char token overlaps
+ */
 export function matchAgentName<T extends { name: string }>(rawText: string, agents: T[]) {
   const query = normalizeComparableText(rawText);
   if (!query) return { status: "missing" as const, matches: [] as T[] };
   const compactQuery = query.replace(/\s+/g, "");
+  const queryTokens = query.split(" ").filter(Boolean);
 
   const scored = agents
     .map((agent) => {
       const name = normalizeComparableText(agent.name);
       const compactName = name.replace(/\s+/g, "");
-      const exact = name === query;
-      const contained =
-        query.includes(name) ||
-        name.includes(query) ||
-        compactQuery.includes(compactName) ||
-        compactName.includes(compactQuery);
-      const tokenMatches = query.split(" ").filter(Boolean).filter((token) => name.split(" ").includes(token)).length;
-      return { agent, score: exact ? 100 : contained ? 80 : tokenMatches };
+      const nameTokens = name.split(" ").filter(Boolean);
+
+      let score = 0;
+      if (name === query || compactName === compactQuery) {
+        score = 100;
+      } else if (queryTokens.length > 0 && queryTokens.every((token) => nameTokens.includes(token))) {
+        score = 90;
+      } else if (compactName.length >= 4 && compactQuery.includes(compactName)) {
+        score = 85;
+      } else if (compactQuery.length >= 4 && compactName.includes(compactQuery)) {
+        score = 80;
+      } else if (
+        queryTokens.length > 0 &&
+        queryTokens.every((token) => token.length >= 3 && nameTokens.some((nameToken) => nameToken.startsWith(token)))
+      ) {
+        score = 70;
+      } else {
+        score = queryTokens.filter((token) => token.length >= 3 && nameTokens.includes(token)).length;
+      }
+
+      return { agent, score };
     })
     .filter((item) => item.score > 0)
     .sort((a, b) => b.score - a.score);
