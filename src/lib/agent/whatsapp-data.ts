@@ -8,6 +8,20 @@ const LEGACY_REFERRER_MARKER = "REFERRER_ACCOUNT";
 const REFERRAL_ACCOUNT_NAME = "Referral";
 const APP_ACTOR = "whatsapp_agent";
 
+/**
+ * Deterministic memory of the entities the V2 agent last worked on. Written
+ * ONLY by application code after successful tool writes (never by the LLM),
+ * injected into the system prompt so pronouns ("it", "him", "that lead")
+ * keep an authoritative antecedent even after the raw turns age out of the
+ * 20-turn history window. Entries older than one hour are ignored.
+ */
+export type WhatsappEntityLedger = {
+  activeLead?: { referralId: number; leadName: string; leadPhone: string };
+  lastAgentDiscussed?: { agentName: string };
+  lastAction?: string;
+  updatedAt: string;
+};
+
 export type WhatsappAgentState = {
   mode:
     | "idle"
@@ -33,6 +47,7 @@ export type WhatsappAgentState = {
   activeLead?: { referralId: number; leadName: string; leadMobile: string; area: string };
   updatedAt?: string;
   lastLeadList?: Array<{ index: number; referralId: number; leadName: string }>;
+  entityLedger?: WhatsappEntityLedger;
   adminContext?: {
     adminPhone: string;
     targetReferrer?: WhatsappReferrerAccount | null;
@@ -260,6 +275,7 @@ export async function loadAgentState(senderPhone: string): Promise<WhatsappAgent
     activeLead: state.activeLead,
     updatedAt: state.updatedAt,
     lastLeadList: state.lastLeadList || [],
+    entityLedger: state.entityLedger,
   };
 }
 

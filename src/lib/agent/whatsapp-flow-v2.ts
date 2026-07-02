@@ -15,6 +15,7 @@ import {
   saveAgentState,
   resolveOrCreateReferrerByWhatsappPhone,
   EMPTY_WHATSAPP_AGENT_STATE,
+  type WhatsappEntityLedger,
   type WhatsappReferrerAccount,
 } from "@/lib/agent/whatsapp-data";
 import { isAdminModeTrigger, isAdminModeExit } from "@/lib/agent/whatsapp-intent";
@@ -44,6 +45,66 @@ const PROGRAM_KNOWLEDGE = REFERRAL_TERMS.map(
 ).join("\n\n");
 
 type ToolTrace = { name: string; status: string; input: Record<string, unknown>; result?: unknown };
+
+const ENTITY_LEDGER_TTL_MS = 60 * 60 * 1000;
+
+function freshEntityLedger(ledger: WhatsappEntityLedger | undefined): WhatsappEntityLedger | undefined {
+  if (!ledger?.updatedAt) return undefined;
+  const age = Date.now() - new Date(ledger.updatedAt).getTime();
+  return Number.isFinite(age) && age >= 0 && age <= ENTITY_LEDGER_TTL_MS ? ledger : undefined;
+}
+
+/**
+ * Update the entity ledger from this turn's successful writes. Deterministic
+ * application code only — the LLM never writes memory, so a hallucinated
+ * claim can never become the recorded truth.
+ */
+function deriveEntityLedger(
+  toolTrace: ToolTrace[],
+  previous: WhatsappEntityLedger | undefined,
+): WhatsappEntityLedger | undefined {
+  let ledger = previous;
+
+  for (const trace of toolTrace) {
+    if (trace.status !== "success") continue;
+    const result = trace.result as { success?: boolean; data?: Record<string, unknown> } | undefined;
+    const data = result?.data;
+    if (!result?.success || !data) continue;
+
+    if (trace.name === "create_lead") {
+      const leadName = String(data.leadName || "");
+      const agentName = typeof data.salesAgentName === "string" && data.salesAgentName !== "none" ? data.salesAgentName : "";
+      ledger = {
+        activeLead: {
+          referralId: Number(data.referralId) || 0,
+          leadName,
+          leadPhone: String(data.leadPhone || ""),
+        },
+        lastAgentDiscussed: agentName ? { agentName } : ledger?.lastAgentDiscussed,
+        lastAction: `created lead "${leadName || data.leadPhone}"${agentName ? ` handled by sales agent ${agentName}` : ""}`,
+        updatedAt: new Date().toISOString(),
+      };
+    } else if (trace.name === "update_lead") {
+      const leadName = String(data.leadName || "");
+      const agentName = typeof data.salesAgentName === "string" ? data.salesAgentName : "";
+      ledger = {
+        activeLead: {
+          referralId: Number(data.referralId) || 0,
+          leadName,
+          leadPhone: String(data.leadPhone || ""),
+        },
+        lastAgentDiscussed: agentName ? { agentName } : ledger?.lastAgentDiscussed,
+        lastAction:
+          data.field === "salesAgent"
+            ? `assigned sales agent ${agentName || "(unknown)"} to lead "${leadName}"`
+            : `updated ${String(data.field)} of lead "${leadName}"`,
+        updatedAt: new Date().toISOString(),
+      };
+    }
+  }
+
+  return ledger;
+}
 
 // ============================================================================
 // Main Entry Point
@@ -96,8 +157,9 @@ export async function runWhatsappAgentTurnV2(input: {
   // Admin tools are available while the sender is in an admin session.
   const isAdmin = inAdminSession;
 
-  // Build system prompt
-  const systemPrompt = buildSystemPrompt(referrer, leads, isAdmin);
+  // Build system prompt (with the still-fresh entity ledger, if any)
+  const ledger = freshEntityLedger(state.entityLedger);
+  const systemPrompt = buildSystemPrompt(referrer, leads, isAdmin, ledger);
 
   // Build messages
   const messages = cleanMessages(history, input.text);
@@ -123,6 +185,16 @@ export async function runWhatsappAgentTurnV2(input: {
 
   const reply = rawReply;
 
+  // Persist the updated entity ledger (deterministic, from tool results only).
+  const updatedLedger = deriveEntityLedger(toolTrace, ledger);
+  if (updatedLedger && updatedLedger !== ledger) {
+    try {
+      await saveAgentState(input.senderPhone, { ...state, entityLedger: updatedLedger });
+    } catch (err) {
+      console.error("Failed to save entity ledger:", err);
+    }
+  }
+
   // Record turn
   await recordTurn({
     phone: input.senderPhone,
@@ -144,6 +216,7 @@ function buildSystemPrompt(
   referrer: WhatsappReferrerAccount,
   leads: ReferralRow[],
   isAdmin: boolean,
+  ledger?: WhatsappEntityLedger,
 ): string {
   const lines = [
     `You are the WhatsApp Referral Assistant for ${COMPANY_LEGAL_NAME}.`,
@@ -186,6 +259,22 @@ function buildSystemPrompt(
     ...formatLeadStateLines(leads),
     "",
   ];
+
+  if (ledger) {
+    lines.push("RECENT CONTEXT (memory from earlier in this conversation):");
+    if (ledger.activeLead) {
+      lines.push(
+        `- Most recently worked-on lead: "${ledger.activeLead.leadName || ledger.activeLead.leadPhone}" (${ledger.activeLead.leadPhone}). When the user says "it/him/her/that lead" without naming one, they usually mean this lead.`,
+      );
+    }
+    if (ledger.lastAgentDiscussed) {
+      lines.push(`- Last sales agent discussed: ${ledger.lastAgentDiscussed.agentName}`);
+    }
+    if (ledger.lastAction) {
+      lines.push(`- Last action: ${ledger.lastAction}`);
+    }
+    lines.push("");
+  }
 
   if (isAdmin) {
     lines.push(
