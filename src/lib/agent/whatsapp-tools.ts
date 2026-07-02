@@ -226,17 +226,35 @@ export async function executeAdminTool(
 ): Promise<ToolResult> {
   switch (toolName) {
     case "admin_lookup":
-      return adminLookup(input);
+      return adminLookup(input, adminPhone);
     case "admin_create_referrer":
       return adminCreateReferrer(input, adminPhone);
     case "admin_add_lead":
-      return adminAddLead(input);
+      return adminAddLead(input, adminPhone);
     case "admin_assign_agent":
-      return adminAssignAgent(input);
+      return adminAssignAgent(input, adminPhone);
     default:
       return { success: false, error: `Unknown admin tool: ${toolName}` };
   }
 }
+
+/**
+ * Admin mode works on OTHER referrers' accounts only. The admin's own account
+ * must be managed as a normal user (reply 'exit' first) — this keeps the two
+ * modes structurally different and makes "which account does this write hit?"
+ * impossible to get wrong.
+ */
+function isOwnAccount(referrerPhone: string | null | undefined, adminPhone: string): boolean {
+  const target = toCanonicalMalaysiaPhone(referrerPhone || "");
+  const admin = toCanonicalMalaysiaPhone(adminPhone || "");
+  return Boolean(target) && target === admin;
+}
+
+const OWN_ACCOUNT_ERROR: ToolError = {
+  success: false,
+  error: "That is the admin's OWN referral account. Admin mode only works on other referrers' accounts.",
+  hint: "Tell the admin to reply 'exit' to leave admin mode, then manage their own leads as a normal user.",
+};
 
 // ============================================================================
 // Shared helpers
@@ -616,7 +634,7 @@ async function updateLead(
 
 // Combined search: find referrer(s) by phone or name AND return each one's
 // leads in a single call, so the model never has to chain search -> get-leads.
-async function adminLookup(input: Record<string, unknown>): Promise<ToolResult> {
+async function adminLookup(input: Record<string, unknown>, adminPhone: string): Promise<ToolResult> {
   const query = str(input.query);
   if (!query) {
     return { success: false, error: "A phone number or referrer name is required." };
@@ -631,6 +649,15 @@ async function adminLookup(input: Record<string, unknown>): Promise<ToolResult> 
   }
   for (const r of await searchReferrersByPhonePartial(query, 10)) {
     if (!found.has(r.customerId)) found.set(r.customerId, r);
+  }
+
+  // The admin's own account is off-limits in admin mode.
+  const matchedOwnAccount = [...found.values()].some((r) => isOwnAccount(r.phone, adminPhone));
+  for (const [key, r] of found) {
+    if (isOwnAccount(r.phone, adminPhone)) found.delete(key);
+  }
+  if (found.size === 0 && matchedOwnAccount) {
+    return OWN_ACCOUNT_ERROR;
   }
 
   if (found.size === 0) {
@@ -680,6 +707,10 @@ async function adminCreateReferrer(
     return { success: false, error: `Invalid phone format: ${phone}` };
   }
 
+  if (isOwnAccount(normalizedPhone, adminPhone)) {
+    return OWN_ACCOUNT_ERROR;
+  }
+
   const referrer = await createReferrerOnBehalf({ name, phone: normalizedPhone, createdBy: adminPhone });
 
   return {
@@ -689,7 +720,7 @@ async function adminCreateReferrer(
   };
 }
 
-async function adminAddLead(input: Record<string, unknown>): Promise<ToolResult> {
+async function adminAddLead(input: Record<string, unknown>, adminPhone: string): Promise<ToolResult> {
   // Accept either the new `referrer` field (phone OR name) or the legacy
   // `referrerPhone` field for backward compatibility.
   const referrerQuery = str(input.referrer) || str(input.referrerPhone);
@@ -704,6 +735,10 @@ async function adminAddLead(input: Record<string, unknown>): Promise<ToolResult>
   const referrerResult = await resolveReferrer(referrerQuery);
   if (!referrerResult.success) return referrerResult;
   const referrer = referrerResult.data;
+
+  if (isOwnAccount(referrer.phone, adminPhone)) {
+    return OWN_ACCOUNT_ERROR;
+  }
 
   const name = str(input.name);
   const phone = str(input.phone);
@@ -749,7 +784,7 @@ async function adminAddLead(input: Record<string, unknown>): Promise<ToolResult>
   };
 }
 
-async function adminAssignAgent(input: Record<string, unknown>): Promise<ToolResult> {
+async function adminAssignAgent(input: Record<string, unknown>, adminPhone: string): Promise<ToolResult> {
   const referrerQuery = str(input.referrer);
   const leadNumber = typeof input.leadNumber === "number" ? input.leadNumber : undefined;
   const agentName = str(input.agentName);
@@ -760,6 +795,10 @@ async function adminAssignAgent(input: Record<string, unknown>): Promise<ToolRes
   const resolved = await resolveReferrer(referrerQuery);
   if (!resolved.success) return resolved;
   const referrer = resolved.data;
+
+  if (isOwnAccount(referrer.phone, adminPhone)) {
+    return OWN_ACCOUNT_ERROR;
+  }
 
   const leads = await listWhatsappReferrals(referrer.customerId);
   if (!leadNumber || leadNumber < 1 || leadNumber > leads.length) {

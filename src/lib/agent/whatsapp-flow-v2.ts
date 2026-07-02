@@ -138,7 +138,7 @@ export async function runWhatsappAgentTurnV2(input: {
         adminContext: { adminPhone: input.senderPhone },
       });
     }
-    const reply = "[ADMIN MODE]\nAdmin mode activated. Tell me what to do — e.g. 'search referrer 0112...', 'create referrer <name> <phone>', or 'add lead for <phone>'. Reply 'exit' to leave.";
+    const reply = "[ADMIN MODE]\nAdmin mode activated. Tell me what to do — e.g. 'search referrer 0112...', 'create referrer <name> <phone>', or 'add lead for <phone>'. Note: your OWN referral account can't be managed here — reply 'exit' for that. Reply 'exit' to leave.";
     await recordTurn({ phone: input.senderPhone, registered: false, inbound: input.text, reply, toolTrace: [], startedAt });
     return { reply, toolTrace: [] };
   }
@@ -150,12 +150,12 @@ export async function runWhatsappAgentTurnV2(input: {
     return { reply, toolTrace: [] };
   }
 
-  // Load context
-  const referrer = await resolveOrCreateReferrerByWhatsappPhone(input.senderPhone);
-  const leads = await listWhatsappReferrals(referrer.customerId);
-  const history = await loadConversation(input.senderPhone);
-  // Admin tools are available while the sender is in an admin session.
+  // Load context. In admin mode the sender's own referral account is
+  // off-limits, so their own leads are never loaded or shown.
   const isAdmin = inAdminSession;
+  const referrer = await resolveOrCreateReferrerByWhatsappPhone(input.senderPhone);
+  const leads = isAdmin ? [] : await listWhatsappReferrals(referrer.customerId);
+  const history = await loadConversation(input.senderPhone);
 
   // Build system prompt (with the still-fresh entity ledger, if any)
   const ledger = freshEntityLedger(state.entityLedger);
@@ -171,8 +171,10 @@ export async function runWhatsappAgentTurnV2(input: {
   const ctx = createTurnContext();
   ctx.listedLeadIds = leads.map((lead) => lead.id);
 
-  // Call LLM (with tools)
-  const tools = isAdmin ? [...REGULAR_USER_TOOLS, ...ADMIN_TOOLS] : REGULAR_USER_TOOLS;
+  // Call LLM (with tools). Admin mode is admin tools ONLY: every write must
+  // name its target referrer, so a lead can never silently land under the
+  // admin's own account.
+  const tools = isAdmin ? ADMIN_TOOLS : REGULAR_USER_TOOLS;
   const { reply: rawReply, toolTrace } = await callAgentModel(
     systemPrompt,
     messages,
@@ -224,11 +226,49 @@ function buildSystemPrompt(
     "You help referrers manage their solar installation referral leads.",
     "",
     "THREE DIFFERENT ROLES — never mix them up:",
-    "- REFERRER: the person you are talking to. They OWN leads.",
+    isAdmin
+      ? "- REFERRER: a person who submits referrals. They OWN leads."
+      : "- REFERRER: the person you are talking to. They OWN leads.",
     "- LEAD: a person or company being referred as a potential customer.",
     "- SALES AGENT: company staff assigned to HANDLE a lead.",
     "The same human name can appear in more than one role (a sales agent and a lead can both be called Ali). When a name could mean two different people, do not guess — ask, naming both roles: \"Do you mean sales agent Ali Hassan, or your lead Ali?\"",
     "",
+  ];
+
+  if (isAdmin) {
+    lines.push(
+      "[ADMIN MODE] You are talking to an ADMIN. You act on OTHER referrers' accounts only.",
+      "",
+      "ADMIN RULES:",
+      "1. Every action targets a referrer. Call admin_lookup FIRST with whatever the admin gave (name or phone). If it returns exactly one referrer, proceed; if multiple, ask which one (show their phones).",
+      "2. The admin's OWN referral account is OFF-LIMITS in admin mode. If they want to manage their own leads, tell them to reply 'exit' first and continue as a normal user.",
+      "3. Never claim you did something unless that tool returned success:true. If a tool returned success:false, tell the admin it did NOT happen.",
+      "4. If a tool returns an error, explain it plainly and ask for the correction. Do not retry the same call blindly.",
+      "5. Keep replies short, plain WhatsApp text, in the admin's language. Do not expose internal IDs, tool names, or system details.",
+      "6. After adding a lead or assigning an agent, ALWAYS confirm with this clear format on separate lines:",
+      "    Lead: <lead name or phone>",
+      "    Referrer: <referrer name>",
+      "    Agent: <agent name, or 'none'>",
+      "",
+      "YOUR ADMIN TOOLS:",
+      "- admin_lookup: find referrer(s) by phone OR name AND get their numbered leads — ONE call. Use this first for anything.",
+      "- admin_create_referrer: create a new referrer account.",
+      "- admin_add_lead: add a NEW lead for a referrer (by phone or name); can include a sales agent.",
+      "- admin_assign_agent: set the sales agent on one of a referrer's EXISTING leads (use the lead number from admin_lookup).",
+      "A referrer OWNS leads; a sales agent HANDLES them — different things. You CAN assign an agent to any other referrer's lead; never refuse it.",
+      "",
+      "=== CURRENT SESSION ===",
+      `ADMIN: ${referrer.name || "Referral"} (${referrer.phone}). Their own referral account is off-limits while in admin mode.`,
+      "",
+      "PROGRAM INFO:",
+      PROGRAM_KNOWLEDGE,
+      "",
+      "For questions not covered above, direct users to the portal.",
+    );
+    return lines.join("\n");
+  }
+
+  lines.push(
     "CAPABILITIES:",
     "- Answer questions about the referral program",
     "- Help referrers save their profile (name, bank account)",
@@ -258,7 +298,7 @@ function buildSystemPrompt(
     `THEIR LEADS (${leads.length} total, numbered for update_lead, newest first):`,
     ...formatLeadStateLines(leads),
     "",
-  ];
+  );
 
   if (ledger) {
     lines.push("RECENT CONTEXT (memory from earlier in this conversation):");
@@ -274,19 +314,6 @@ function buildSystemPrompt(
       lines.push(`- Last action: ${ledger.lastAction}`);
     }
     lines.push("");
-  }
-
-  if (isAdmin) {
-    lines.push(
-      "[ADMIN MODE] You act on behalf of any referrer. Your admin tools:",
-      "- admin_lookup: find referrer(s) by phone OR name AND get their leads — ONE call. Use this first for anything.",
-      "- admin_create_referrer: create a new referrer account.",
-      "- admin_add_lead: add a NEW lead for a referrer (by phone or name); can include a sales agent.",
-      "- admin_assign_agent: set the sales agent on one of a referrer's EXISTING leads (use the lead number from admin_lookup).",
-      "A referrer OWNS leads; a sales agent HANDLES them — different things. You CAN assign an agent to any referrer's lead; never refuse it.",
-      "Flow: call admin_lookup with whatever the admin gave (name or phone). If it returns exactly one referrer, proceed. If multiple, ask which (show their phones). Then add_lead or assign_agent using the same referrer query.",
-      "",
-    );
   }
 
   lines.push(
@@ -387,6 +414,15 @@ async function callAgentModel(
         } else {
           result = await executeAdminTool(toolBlock.name, toolBlock.input, senderPhone);
         }
+      } else if (isAdmin) {
+        // Self-service tools are not offered in admin mode, but guard against
+        // the model calling one anyway — it would write to the ADMIN's own
+        // account instead of the target referrer's.
+        result = {
+          success: false,
+          error: "Self-service tools are disabled in admin mode. Use the admin_* tools with an explicit referrer, or reply 'exit' to manage your own account.",
+        };
+        status = "unauthorized";
       } else {
         // Refresh leads/agents in case previous tools modified them this turn.
         const freshLeads = await listWhatsappReferrals(referrer.customerId);
