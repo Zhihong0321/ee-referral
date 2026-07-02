@@ -205,8 +205,13 @@ export async function executeRegularTool(
       return searchAgents(input, agents);
     case "save_my_profile":
       return saveMyProfile(input, referrer);
-    case "create_lead":
-      return createLead(input, referrer, leads, agents);
+    case "create_lead": {
+      const result = await createLead(input, referrer, leads, agents);
+      // A new lead lands at #1 (newest first), shifting every number the model
+      // was shown. Invalidate the listed ids so update_lead forces a re-list.
+      if (result.success) ctx.listedLeadIds = null;
+      return result;
+    }
     case "update_lead":
       return updateLead(input, referrer, leads, agents, ctx);
     default:

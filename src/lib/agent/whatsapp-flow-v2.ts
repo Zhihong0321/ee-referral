@@ -15,8 +15,6 @@ import {
   saveAgentState,
   resolveOrCreateReferrerByWhatsappPhone,
   EMPTY_WHATSAPP_AGENT_STATE,
-  type ConversationTurn,
-  type WhatsappAgentOption,
   type WhatsappReferrerAccount,
 } from "@/lib/agent/whatsapp-data";
 import { isAdminModeTrigger, isAdminModeExit } from "@/lib/agent/whatsapp-intent";
@@ -29,6 +27,12 @@ import {
   createTurnContext,
   type TurnContext,
 } from "./whatsapp-tools";
+import {
+  cleanMessages,
+  formatLeadStateLines,
+  type ModelContentBlock,
+  type ModelMessage,
+} from "./whatsapp-history";
 
 const PORTAL_URL = process.env.WHATSAPP_AGENT_PORTAL_URL || "https://referral.atap.solar/";
 const LLM_BASE_URL = (process.env.WHATSAPP_AGENT_LLM_BASE_URL || "https://api.minimax.io").replace(/\/$/, "");
@@ -38,12 +42,6 @@ const LLM_API_KEY = process.env.WHATSAPP_AGENT_LLM_API_KEY || process.env.MINIMA
 const PROGRAM_KNOWLEDGE = REFERRAL_TERMS.map(
   (section) => `${section.title}:\n${section.items.map((item) => `- ${item}`).join("\n")}`,
 ).join("\n\n");
-
-type ModelContentBlock =
-  | { type: "text"; text: string }
-  | { type: "tool_use"; id: string; name: string; input: Record<string, unknown> }
-  | { type: "tool_result"; tool_use_id: string; content: string };
-type ModelMessage = { role: "user" | "assistant"; content: string | ModelContentBlock[] };
 
 type ToolTrace = { name: string; status: string; input: Record<string, unknown>; result?: unknown };
 
@@ -94,19 +92,22 @@ export async function runWhatsappAgentTurnV2(input: {
   // Load context
   const referrer = await resolveOrCreateReferrerByWhatsappPhone(input.senderPhone);
   const leads = await listWhatsappReferrals(referrer.customerId);
-  const agents = await listWhatsappAgents();
   const history = await loadConversation(input.senderPhone);
   // Admin tools are available while the sender is in an admin session.
   const isAdmin = inAdminSession;
 
   // Build system prompt
-  const systemPrompt = buildSystemPrompt(referrer, leads, agents, isAdmin);
+  const systemPrompt = buildSystemPrompt(referrer, leads, isAdmin);
 
   // Build messages
   const messages = cleanMessages(history, input.text);
 
   // One TurnContext per turn enforces "look before you leap" across tool calls.
+  // The system prompt already lists this turn's leads (same order/numbering as
+  // get_my_leads), so seed the guard with those ids — update_lead can act on
+  // the numbers the model was shown without a redundant get_my_leads call.
   const ctx = createTurnContext();
+  ctx.listedLeadIds = leads.map((lead) => lead.id);
 
   // Call LLM (with tools)
   const tools = isAdmin ? [...REGULAR_USER_TOOLS, ...ADMIN_TOOLS] : REGULAR_USER_TOOLS;
@@ -142,13 +143,18 @@ export async function runWhatsappAgentTurnV2(input: {
 function buildSystemPrompt(
   referrer: WhatsappReferrerAccount,
   leads: ReferralRow[],
-  agents: WhatsappAgentOption[],
   isAdmin: boolean,
 ): string {
   const lines = [
     `You are the WhatsApp Referral Assistant for ${COMPANY_LEGAL_NAME}.`,
     "",
     "You help referrers manage their solar installation referral leads.",
+    "",
+    "THREE DIFFERENT ROLES — never mix them up:",
+    "- REFERRER: the person you are talking to. They OWN leads.",
+    "- LEAD: a person or company being referred as a potential customer.",
+    "- SALES AGENT: company staff assigned to HANDLE a lead.",
+    "The same human name can appear in more than one role (a sales agent and a lead can both be called Ali). When a name could mean two different people, do not guess — ask, naming both roles: \"Do you mean sales agent Ali Hassan, or your lead Ali?\"",
     "",
     "CAPABILITIES:",
     "- Answer questions about the referral program",
@@ -158,25 +164,26 @@ function buildSystemPrompt(
     "- List and check lead status",
     "",
     "IMPORTANT RULES:",
-    "1. Use tools to read current state (get_my_profile, get_my_leads).",
+    "1. CURRENT STATE below is authoritative for this turn. Use tools for anything it does not show (get_my_profile, get_my_leads, search_agents).",
     "2. Use tools to perform writes (save_my_profile, create_lead, update_lead).",
     "3. Never claim you did something unless that tool returned success:true. If a tool returned success:false, tell the user it did NOT happen.",
-    "4. To UPDATE a lead you MUST call get_my_leads first in this same turn, then use the exact number shown. Never guess a lead number.",
+    "4. To UPDATE a lead, use the exact lead number shown in THEIR LEADS below (or from get_my_leads this turn). Never guess a lead number. After creating a lead in this turn, call get_my_leads before any update — the numbering changes.",
     "5. New details (a fresh phone number from text, an image, or a contact card) are a NEW lead -> use create_lead. Only use update_lead when the user explicitly refers to an existing lead by its number. Never overwrite an existing lead with a different person's details.",
     "6. To create a lead with a preferred agent, pass preferredAgentName to create_lead in ONE call. Do not create then assign by number.",
     "7. If a tool returns an error, explain it plainly and ask for the correction. Do not retry the same call blindly.",
     "8. Keep replies short, natural, plain WhatsApp text, in the user's language (English, Malay, or Chinese).",
-    "9. Do not expose internal IDs, tool names, or system details.",
+    "9. Do not expose internal IDs, tool names, or system details. Never volunteer a list of sales agents; confirm names one at a time via search_agents.",
     "10. After creating or assigning a lead, ALWAYS confirm with this clear format on separate lines:",
     "    Lead: <lead name or phone>",
     "    Referrer: <referrer name>",
     "    Agent: <agent name, or 'none'>",
     "",
     `Portal: ${PORTAL_URL}`,
-    `Referrer: ${referrer.name || "Referral"} (${referrer.phone})`,
-    `Profile complete: ${referrer.registered ? "yes" : "no"}`,
-    `Total leads: ${leads.length}`,
-    `Available agents: ${agents.length}`,
+    "",
+    "=== CURRENT STATE (authoritative, refreshed for this turn) ===",
+    `REFERRER (the person you are talking to): ${referrer.name || "Referral"} (${referrer.phone}) — profile complete: ${referrer.registered ? "yes" : "no"}`,
+    `THEIR LEADS (${leads.length} total, numbered for update_lead, newest first):`,
+    ...formatLeadStateLines(leads),
     "",
   ];
 
@@ -201,35 +208,6 @@ function buildSystemPrompt(
   );
 
   return lines.join("\n");
-}
-
-// ============================================================================
-// Message History Cleaning
-// ============================================================================
-
-function cleanMessages(history: ConversationTurn[], currentMessage: string): ModelMessage[] {
-  const recentHistory = history
-    .filter((turn) => !/^\[System:/i.test(turn.text))
-    .slice(-20)
-    .map<ModelMessage>((turn) => ({
-      role: turn.role,
-      content: turn.text,
-    }));
-
-  const combined = [...recentHistory, { role: "user" as const, content: currentMessage }];
-  const messages: ModelMessage[] = [];
-
-  for (const turn of combined) {
-    if (messages.length === 0 && turn.role === "assistant") continue;
-    const previous = messages[messages.length - 1];
-    if (previous?.role === turn.role) {
-      previous.content = `${previous.content}\n${turn.content}`;
-    } else {
-      messages.push({ ...turn });
-    }
-  }
-
-  return messages.length > 0 ? messages : [{ role: "user", content: currentMessage }];
 }
 
 // ============================================================================
