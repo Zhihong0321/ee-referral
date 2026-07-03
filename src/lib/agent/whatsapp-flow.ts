@@ -19,8 +19,8 @@ import { toCanonicalMalaysiaPhone } from "@/lib/phone-normalization";
 import { matchAgentName } from "@/lib/agent/whatsapp-intent";
 
 const PORTAL_URL = process.env.WHATSAPP_AGENT_PORTAL_URL || "https://referral.atap.solar/";
-const LLM_BASE_URL = (process.env.WHATSAPP_AGENT_LLM_BASE_URL || "https://api.minimax.io").replace(/\/$/, "");
-const LLM_MODEL = process.env.WHATSAPP_AGENT_LLM_MODEL || "MiniMax-M3";
+const LLM_BASE_URL = (process.env.WHATSAPP_AGENT_LLM_BASE_URL || "https://token-plan-sgp.xiaomimimo.com").replace(/\/$/, "");
+const LLM_MODEL = process.env.WHATSAPP_AGENT_LLM_MODEL || "mimo-v2.5-pro";
 const LLM_API_KEY = process.env.WHATSAPP_AGENT_LLM_API_KEY || process.env.MINIMAX_API_KEY || "";
 const WRITE_CLAIM_PATTERN =
   /\b(?:done|all set)\b|\b(?:i(?:'ve| have)?|we(?:'ve| have)?)\s+(?:added|saved|updated|assigned|registered|notified|changed)\b|已(?:添加|保存|更新|分配|登记|注册)|添加成功|保存成功|berjaya (?:simpan|tambah|daftar)|sudah (?:simpan|tambah|daftar)/i;
@@ -231,6 +231,7 @@ async function callAgentModel(
     method: "POST",
     headers: {
       "x-api-key": LLM_API_KEY,
+      "api-key": LLM_API_KEY,
       "anthropic-version": "2023-06-01",
       "Content-Type": "application/json",
     },

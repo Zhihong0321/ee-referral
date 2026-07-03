@@ -37,8 +37,8 @@ import {
 } from "./whatsapp-history";
 
 const PORTAL_URL = process.env.WHATSAPP_AGENT_PORTAL_URL || "https://referral.atap.solar/";
-const LLM_BASE_URL = (process.env.WHATSAPP_AGENT_LLM_BASE_URL || "https://api.minimax.io").replace(/\/$/, "");
-const LLM_MODEL = process.env.WHATSAPP_AGENT_LLM_MODEL || "MiniMax-M3";
+const LLM_BASE_URL = (process.env.WHATSAPP_AGENT_LLM_BASE_URL || "https://token-plan-sgp.xiaomimimo.com").replace(/\/$/, "");
+const LLM_MODEL = process.env.WHATSAPP_AGENT_LLM_MODEL || "mimo-v2.5-pro";
 const LLM_API_KEY = process.env.WHATSAPP_AGENT_LLM_API_KEY || process.env.MINIMAX_API_KEY || "";
 
 const PROGRAM_KNOWLEDGE = REFERRAL_TERMS.map(
@@ -322,7 +322,7 @@ function buildSystemPrompt(
       "[ADMIN MODE] You are talking to an ADMIN. You act on OTHER referrers' accounts only.",
       "",
       "ADMIN RULES:",
-      "1. Every action targets a referrer. Call admin_lookup FIRST with whatever the admin gave (name or phone). If it returns exactly one referrer, proceed; if multiple, ask which one (show their phones).",
+      "1. Every action targets a referrer. Call admin_lookup FIRST with whatever the admin gave (name or phone) — it searches BOTH, in one call. If it returns exactly one referrer, proceed; if multiple, ask which one (show their phones). Never tell the admin that name search isn't supported — it is. If an earlier turn in this conversation claimed otherwise, that claim was wrong; call admin_lookup now instead of repeating it.",
       "2. The admin's OWN referral account is OFF-LIMITS in admin mode. If they want to manage their own leads, tell them to reply 'exit' first and continue as a normal user.",
       "3. Never claim you did something unless that tool returned success:true. If a tool returned success:false, tell the admin it did NOT happen.",
       "4. If a tool returns an error, explain it plainly and ask for the correction. Do not retry the same call blindly.",
@@ -436,7 +436,7 @@ async function callAgentModel(
     return { reply: "Too many tool calls. Please simplify your request.", toolTrace: [] };
   }
 
-  // Call MiniMax-M3
+  // Call the configured Anthropic Messages-compatible LLM (Xiaomi MiMo by default).
   const body = {
     model: LLM_MODEL,
     max_tokens: 800,
@@ -449,6 +449,7 @@ async function callAgentModel(
     method: "POST",
     headers: {
       "x-api-key": LLM_API_KEY,
+      "api-key": LLM_API_KEY,
       "anthropic-version": "2023-06-01",
       "Content-Type": "application/json",
     },

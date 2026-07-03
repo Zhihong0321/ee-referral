@@ -110,7 +110,7 @@ export const REGULAR_USER_TOOLS = [
 export const ADMIN_TOOLS = [
   {
     name: "admin_lookup",
-    description: "Look up a referrer by phone number OR account name (fuzzy) and get their existing leads in one call. Returns every matching referrer, each with their numbered leads (and the agent assigned to each). Use this first for any admin task — searching, then adding/assigning uses the same query string.",
+    description: "Look up a referrer by phone number OR account name (fuzzy) and get their existing leads in one call. Name search works — do not assume only phone search is supported. Returns every matching referrer, each with their numbered leads (and the agent assigned to each). Use this first for any admin task — searching, then adding/assigning uses the same query string.",
     input_schema: {
       type: "object",
       properties: {
