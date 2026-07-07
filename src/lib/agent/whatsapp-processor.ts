@@ -268,6 +268,18 @@ async function describeWhatsappVisual(mediaUrl: string, messageType: "image" | "
   const contentType = rawContentType.split(';')[0].trim();
   const mediaBase64 = Buffer.from(await mediaResponse.arrayBuffer()).toString("base64");
 
+  return convertVisualBytesToText({ contentType, base64: mediaBase64, messageType, caption });
+}
+
+// Shared with the web-chat channel (src/app/api/web-chat/message), which has the
+// image bytes directly from a browser upload instead of a WhatsApp media URL.
+export async function convertVisualBytesToText(input: {
+  contentType: string;
+  base64: string;
+  messageType: "image" | "video";
+  caption: string;
+}) {
+  const { contentType, base64: mediaBase64, messageType, caption } = input;
   const apiKey = process.env.WHATSAPP_AGENT_VISION_API_KEY || "";
   if (!apiKey) {
     throw new Error("Vision API key is not set.");

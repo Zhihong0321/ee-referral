@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { loadConversation } from "@/lib/agent/whatsapp-data";
+import { distillHistoryTurnText } from "@/lib/agent/whatsapp-history";
 import { toCanonicalMalaysiaPhone } from "@/lib/phone-normalization";
 
 export const runtime = "nodejs";
@@ -20,7 +21,11 @@ export async function GET(request: Request) {
   try {
     const history = await loadConversation(canonicalPhone);
     return NextResponse.json({
-      messages: history.map((turn) => ({ role: turn.role, text: turn.text, time: turn.time || null })),
+      messages: history.map((turn) => ({
+        role: turn.role,
+        text: turn.role === "user" ? distillHistoryTurnText(turn.text) : turn.text,
+        time: turn.time || null,
+      })),
     });
   } catch {
     return NextResponse.json({ error: "Unable to load conversation history right now." }, { status: 500 });
