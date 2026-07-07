@@ -56,6 +56,12 @@ export default function Home() {
             Open Dashboard
           </Link>
           <Link
+            href="/webchat"
+            className="inline-flex items-center justify-center rounded-xl border border-slate-300 bg-white px-6 py-3 text-sm font-semibold text-slate-800 transition hover:border-slate-400"
+          >
+            Chat With Referral Assistant
+          </Link>
+          <Link
             href="/terms"
             className="inline-flex items-center justify-center rounded-xl border border-slate-300 bg-white px-6 py-3 text-sm font-semibold text-slate-800 transition hover:border-slate-400"
           >
