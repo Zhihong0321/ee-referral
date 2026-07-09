@@ -403,6 +403,30 @@ export async function appendConversation(senderPhone: string, newTurns: Conversa
   );
 }
 
+// Resets the thread for one phone: drops conversation memory and any
+// in-flight workflow state (draft leads, agent-selection, etc.) so the next
+// message starts clean. Does not touch the referral account or its data.
+export async function clearConversation(senderPhone: string) {
+  const config = getAgentConfig();
+  const canonicalPhone = toCanonicalMalaysiaPhone(senderPhone);
+
+  await ensureChannelSession();
+  await runWhatsappAgentSql(
+    `
+      UPDATE et_channel_sessions
+      SET
+        metadata = (COALESCE(metadata, '{}'::jsonb)
+          #- ARRAY['conversations', $3])
+          #- ARRAY['agentStates', $3],
+        updated_at = NOW()
+      WHERE tenant_id = $1
+        AND channel_type = 'whatsapp'
+        AND session_identifier = $2
+    `,
+    [config.tenantId, config.sessionId, canonicalPhone],
+  );
+}
+
 // ---- Agent debug log (prod observability) ------------------------------------
 // A global ring buffer of recent agent turns, stored in
 // et_channel_sessions.metadata.agentDebugLog. Lets us inspect the agent's

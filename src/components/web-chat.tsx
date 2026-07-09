@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 
 const STORAGE_KEY = "ee_webchat_phone";
@@ -12,6 +12,8 @@ type ChatMessage = { role: "user" | "assistant"; text: string; time?: string | n
 type Phase = "loading" | "login" | "chat";
 
 type PendingImage = { dataUrl: string; name: string };
+
+type DetectedStaff = { name: string };
 
 function SendIcon() {
   return (
@@ -45,6 +47,136 @@ function ImageIcon() {
   );
 }
 
+function InstallIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden>
+      <rect x="4" y="4" width="16" height="16" rx="3" stroke="currentColor" strokeWidth={2} />
+      <path d="M12 8v6m0 0l-2.5-2.5M12 14l2.5-2.5" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function ShareIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4 shrink-0" aria-hidden>
+      <path d="M12 3v12" stroke="currentColor" strokeWidth={2} strokeLinecap="round" />
+      <path d="M8 7l4-4 4 4" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M5 12v6a2 2 0 002 2h10a2 2 0 002-2v-6" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+type BeforeInstallPromptEvent = Event & {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
+};
+
+function subscribeNever() {
+  return () => {};
+}
+
+function getIsIOSSnapshot() {
+  const ua = window.navigator.userAgent;
+  return /iphone|ipad|ipod/i.test(ua) || (/Macintosh/i.test(ua) && navigator.maxTouchPoints > 1);
+}
+
+function getIsStandaloneSnapshot() {
+  return (
+    window.matchMedia("(display-mode: standalone)").matches ||
+    (window.navigator as unknown as { standalone?: boolean }).standalone === true
+  );
+}
+
+function getFalseSnapshot() {
+  return false;
+}
+
+function useInstallPrompt() {
+  const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const isIOS = useSyncExternalStore(subscribeNever, getIsIOSSnapshot, getFalseSnapshot);
+  const isStandalone = useSyncExternalStore(subscribeNever, getIsStandaloneSnapshot, getFalseSnapshot);
+
+  useEffect(() => {
+    function handleBeforeInstallPrompt(event: Event) {
+      event.preventDefault();
+      setDeferredPrompt(event as BeforeInstallPromptEvent);
+    }
+
+    window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+    return () => window.removeEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+  }, []);
+
+  return { deferredPrompt, setDeferredPrompt, isIOS, isStandalone };
+}
+
+function IOSInstallHint({ onClose }: { onClose: () => void }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/30 p-4 sm:items-center" onClick={onClose}>
+      <div
+        className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-xl"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <p className="text-sm font-semibold text-slate-800">Add to Home Screen</p>
+        <ol className="mt-3 space-y-2 text-sm leading-6 text-slate-600">
+          <li className="flex items-center gap-2">
+            <ShareIcon /> 1. Tap the Share button in Safari&apos;s toolbar
+          </li>
+          <li>2. Scroll down and tap &quot;Add to Home Screen&quot;</li>
+          <li>3. Tap &quot;Add&quot; to confirm</li>
+        </ol>
+        <button
+          type="button"
+          onClick={onClose}
+          className="mt-4 w-full rounded-xl bg-amber-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-amber-700"
+        >
+          Got it
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function InstallButton({ className = "" }: { className?: string }) {
+  const { deferredPrompt, setDeferredPrompt, isIOS, isStandalone } = useInstallPrompt();
+  const [showIOSHint, setShowIOSHint] = useState(false);
+
+  if (isStandalone || (!deferredPrompt && !isIOS)) return null;
+
+  async function handleClick() {
+    if (deferredPrompt) {
+      await deferredPrompt.prompt();
+      await deferredPrompt.userChoice;
+      setDeferredPrompt(null);
+      return;
+    }
+    setShowIOSHint(true);
+  }
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => void handleClick()}
+        aria-label="Add to Home Screen"
+        className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-slate-500 transition hover:bg-black/5 hover:text-slate-800 sm:px-3 ${className}`}
+      >
+        <InstallIcon />
+        <span className="hidden sm:inline">Add to Home Screen</span>
+      </button>
+      {showIOSHint ? <IOSInstallHint onClose={() => setShowIOSHint(false)} /> : null}
+    </>
+  );
+}
+
+function StaffBadge({ staff }: { staff: DetectedStaff }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">
+      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+      Staff: {staff.name}
+    </span>
+  );
+}
+
 function TypingIndicator() {
   return (
     <div className="flex items-center gap-1 py-2">
@@ -61,7 +193,7 @@ function autoResize(el: HTMLTextAreaElement | null) {
   el.style.height = `${Math.min(el.scrollHeight, MAX_COMPOSER_HEIGHT)}px`;
 }
 
-export default function WebChat() {
+export default function WebChat({ detectedStaff }: { detectedStaff: DetectedStaff | null }) {
   const [phase, setPhase] = useState<Phase>("loading");
   const [phone, setPhone] = useState("");
   const [loginDraft, setLoginDraft] = useState("");
@@ -234,6 +366,35 @@ export default function WebChat() {
     setPhase("login");
   }
 
+  async function resetChat() {
+    if (!phone || busy) return;
+    if (typeof window !== "undefined" && !window.confirm("Clear this conversation and start fresh?")) return;
+
+    setBusy(true);
+    setError("");
+
+    try {
+      const response = await fetch("/api/web-chat/reset", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone }),
+      });
+
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => ({}))) as { error?: string };
+        setError(payload.error || "Unable to reset the chat right now.");
+        return;
+      }
+
+      setMessages([]);
+      setPendingImage(null);
+    } catch {
+      setError("Unable to reset the chat right now.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (phase === "loading") {
     return (
       <div className="flex h-dvh items-center justify-center bg-[#F9F8F6]">
@@ -245,7 +406,7 @@ export default function WebChat() {
   if (phase === "login") {
     return (
       <div className="flex h-dvh flex-col overflow-hidden bg-[#F9F8F6]">
-        <header className="flex items-center gap-2 px-4 py-3 sm:px-6">
+        <header className="flex items-center justify-between gap-2 px-4 py-3 sm:px-6">
           <Link
             href="/"
             className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-sm font-medium text-slate-500 transition hover:bg-black/5 hover:text-slate-800"
@@ -253,6 +414,10 @@ export default function WebChat() {
             <BackIcon />
             Home
           </Link>
+          <div className="flex items-center gap-2">
+            {detectedStaff ? <StaffBadge staff={detectedStaff} /> : null}
+            <InstallButton />
+          </div>
         </header>
 
         <div className="flex flex-1 flex-col items-center justify-center px-5 pb-24">
@@ -320,13 +485,25 @@ export default function WebChat() {
             <p className="truncate font-mono text-xs text-slate-400">{phone}</p>
           </div>
         </div>
-        <button
-          type="button"
-          onClick={logout}
-          className="shrink-0 rounded-lg px-3 py-1.5 text-xs font-semibold text-slate-500 transition hover:bg-black/5 hover:text-slate-800"
-        >
-          Switch number
-        </button>
+        <div className="flex shrink-0 items-center gap-2">
+          {detectedStaff ? <StaffBadge staff={detectedStaff} /> : null}
+          <InstallButton />
+          <button
+            type="button"
+            onClick={() => void resetChat()}
+            disabled={busy}
+            className="rounded-lg px-3 py-1.5 text-xs font-semibold text-slate-500 transition hover:bg-black/5 hover:text-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Reset chat
+          </button>
+          <button
+            type="button"
+            onClick={logout}
+            className="rounded-lg px-3 py-1.5 text-xs font-semibold text-slate-500 transition hover:bg-black/5 hover:text-slate-800"
+          >
+            Switch number
+          </button>
+        </div>
       </header>
 
       <div className="flex-1 overflow-y-auto overscroll-contain">
