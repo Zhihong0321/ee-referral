@@ -1,4 +1,8 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
+
+import { getCurrentAuthUser } from "@/lib/auth";
+import { findInternalAppUser, hasAnyAccessLevel } from "@/lib/internal-users";
 import { listManagerReferralLeads } from "@/lib/referrals";
 
 function statusClassName(status: string | null) {
@@ -59,6 +63,18 @@ function StatCard({ label, value, color }: StatCardProps) {
 }
 
 export default async function ReferralOverviewPage() {
+  const authUser = await getCurrentAuthUser();
+
+  if (!authUser) {
+    redirect("/auth/start?return_to=/referral-overview");
+  }
+
+  const internalUser = await findInternalAppUser(authUser);
+
+  if (!internalUser || !hasAnyAccessLevel(internalUser.accessLevels, ["HR", "KC"])) {
+    redirect("/dashboard");
+  }
+
   let referrals: Awaited<ReturnType<typeof listManagerReferralLeads>> = [];
   let loadError = "";
 
