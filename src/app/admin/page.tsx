@@ -99,6 +99,9 @@ function DashboardShell({
             <Link href="/" className="text-sm font-semibold text-slate-700 hover:text-slate-900">
               Return Home
             </Link>
+            <Link href="/referral-overview" className="text-sm font-semibold text-teal-700 hover:text-teal-800">
+              Referral Overview
+            </Link>
             <form action={adminLogoutAction}>
               <button type="submit" className="text-sm font-semibold text-teal-700 hover:text-teal-800">
                 Admin Logout

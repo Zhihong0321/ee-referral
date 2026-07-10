@@ -275,6 +275,11 @@ async function renderManagerDashboard(params: Awaited<DashboardPageProps["search
       badge="Manager Queue"
       title={`Referral Leads, ${managerName}`}
       subtitle="Review all incoming referrals, filter the queue, and assign or reassign leads to internal agents."
+      headerActions={
+        <Link href="/referral-overview" className="text-sm font-semibold text-teal-700 hover:text-teal-800">
+          Referral Overview
+        </Link>
+      }
     >
       <FlashMessages success={params.success} error={params.error} />
 
