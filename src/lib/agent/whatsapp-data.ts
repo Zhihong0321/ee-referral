@@ -1317,6 +1317,7 @@ export async function updateWhatsappReferral(
 }
 
 export async function insertEtMessage(input: {
+  channel: string;
   externalMessageId: string;
   direction: "inbound" | "outbound";
   messageType: string;
@@ -1345,12 +1346,13 @@ export async function insertEtMessage(input: {
         sender_phone,
         recipient_phone
       )
-      VALUES ($1, $2, 'whatsapp', $3, $4, $5, NULLIF($6, ''), NULLIF($7, ''), $8::jsonb, $9, $10, $11)
+      VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, ''), NULLIF($8, ''), $9::jsonb, $10, $11, $12)
       ON CONFLICT DO NOTHING
     `,
     [
       config.tenantId,
       input.channelSessionId,
+      input.channel,
       input.externalMessageId,
       input.direction,
       input.messageType,

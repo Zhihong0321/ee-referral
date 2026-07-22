@@ -22,6 +22,14 @@ const PORTAL_URL = process.env.WHATSAPP_AGENT_PORTAL_URL || "https://referral.at
 const LLM_BASE_URL = (process.env.WHATSAPP_AGENT_LLM_BASE_URL || "https://token-plan-sgp.xiaomimimo.com").replace(/\/$/, "");
 const LLM_MODEL = process.env.WHATSAPP_AGENT_LLM_MODEL || "mimo-v2.5-pro";
 const LLM_API_KEY = process.env.WHATSAPP_AGENT_LLM_API_KEY || process.env.MINIMAX_API_KEY || "";
+
+function getLlmEndpoint(baseUrl: string): string {
+  const clean = baseUrl.replace(/\/$/, "");
+  if (clean.endsWith("/messages")) return clean;
+  if (clean.endsWith("/v1")) return `${clean}/messages`;
+  return `${clean}/anthropic/v1/messages`;
+}
+
 const WRITE_CLAIM_PATTERN =
   /\b(?:done|all set)\b|\b(?:i(?:'ve| have)?|we(?:'ve| have)?)\s+(?:added|saved|updated|assigned|registered|notified|changed)\b|已(?:添加|保存|更新|分配|登记|注册)|添加成功|保存成功|berjaya (?:simpan|tambah|daftar)|sudah (?:simpan|tambah|daftar)/i;
 
@@ -227,9 +235,10 @@ async function callAgentModel(
     body.tools = tools;
   }
 
-  const response = await fetch(`${LLM_BASE_URL}/anthropic/v1/messages`, {
+  const response = await fetch(getLlmEndpoint(LLM_BASE_URL), {
     method: "POST",
     headers: {
+      "authorization": `Bearer ${LLM_API_KEY}`,
       "x-api-key": LLM_API_KEY,
       "api-key": LLM_API_KEY,
       "anthropic-version": "2023-06-01",

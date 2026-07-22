@@ -41,6 +41,14 @@ const LLM_BASE_URL = (process.env.WHATSAPP_AGENT_LLM_BASE_URL || "https://token-
 const LLM_MODEL = process.env.WHATSAPP_AGENT_LLM_MODEL || "mimo-v2.5-pro";
 const LLM_API_KEY = process.env.WHATSAPP_AGENT_LLM_API_KEY || process.env.MINIMAX_API_KEY || "";
 
+function getLlmEndpoint(baseUrl: string): string {
+  const clean = baseUrl.replace(/\/$/, "");
+  if (clean.endsWith("/messages")) return clean;
+  if (clean.endsWith("/v1")) return `${clean}/messages`;
+  return `${clean}/anthropic/v1/messages`;
+}
+
+
 const PROGRAM_KNOWLEDGE = REFERRAL_TERMS.map(
   (section) => `${section.title}:\n${section.items.map((item) => `- ${item}`).join("\n")}`,
 ).join("\n\n");
@@ -445,9 +453,10 @@ async function callAgentModel(
     tools: tools.length > 0 ? tools : undefined,
   };
 
-  const response = await fetch(`${LLM_BASE_URL}/anthropic/v1/messages`, {
+  const response = await fetch(getLlmEndpoint(LLM_BASE_URL), {
     method: "POST",
     headers: {
+      "authorization": `Bearer ${LLM_API_KEY}`,
       "x-api-key": LLM_API_KEY,
       "api-key": LLM_API_KEY,
       "anthropic-version": "2023-06-01",

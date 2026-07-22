@@ -507,6 +507,7 @@ export async function processWhatsappAgentMessages(
       if (channelSession) {
         if (!(await hasEtMessage(message.externalMessageId, "inbound"))) {
           await insertEtMessage({
+            channel: "whatsapp",
             externalMessageId: message.externalMessageId,
             direction: "inbound",
             messageType: message.messageType || "text",
@@ -521,6 +522,7 @@ export async function processWhatsappAgentMessages(
 
         sendResult = await sendWhatsappText(senderPhone, reply);
         await insertEtMessage({
+          channel: "whatsapp",
           externalMessageId: `agent_reply_${message.externalMessageId}`,
           direction: "outbound",
           messageType: "text",
