@@ -467,7 +467,7 @@ async function callAgentModel(
 
   const text = await response.text();
   if (!response.ok) {
-    throw new Error(`LLM HTTP ${response.status}: ${text.slice(0, 300)}`);
+    throw new Error(`LLM HTTP ${response.status} [endpoint: ${getLlmEndpoint(LLM_BASE_URL)}, model: ${LLM_MODEL}]: ${text.slice(0, 300)}`);
   }
 
   const payload = JSON.parse(text) as {
