@@ -1,0 +1,35 @@
+{
+  "name": "webchat-portable",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Standalone Referral Assistant web chat that shares the Eternalgy referral database.",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "node server.js",
+    "lint": "eslint"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "dependencies": {
+    "jsonwebtoken": "^9.0.3",
+    "next": "16.1.6",
+    "pg": "^8.18.0",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/node": "^20",
+    "@types/pg": "^8.16.0",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.1.6",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}
