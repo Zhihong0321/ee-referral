@@ -142,8 +142,6 @@ type CustomerCapabilities = {
   hasReferralLeadState: boolean;
   hasReferralLeadCity: boolean;
   hasReferralLeadAddress: boolean;
-  hasAgentTable: boolean;
-  hasAgentLinkedUserLogin: boolean;
   hasUserTable: boolean;
   hasUserAccessLevel: boolean;
 };
@@ -289,19 +287,6 @@ async function getCustomerCapabilities(executor: Queryable): Promise<CustomerCap
       SELECT 1
       FROM information_schema.tables
       WHERE table_schema = 'public'
-        AND table_name = 'agent'
-    ) AS has_agent_table,
-    EXISTS (
-      SELECT 1
-      FROM information_schema.columns
-      WHERE table_schema = 'public'
-        AND table_name = 'agent'
-        AND column_name = 'linked_user_login'
-    ) AS has_agent_linked_user_login,
-    EXISTS (
-      SELECT 1
-      FROM information_schema.tables
-      WHERE table_schema = 'public'
         AND table_name = 'user'
     ) AS has_user_table,
     EXISTS (
@@ -322,8 +307,6 @@ async function getCustomerCapabilities(executor: Queryable): Promise<CustomerCap
     hasReferralLeadState: result.rows[0]?.has_referral_lead_state ?? false,
     hasReferralLeadCity: result.rows[0]?.has_referral_lead_city ?? false,
     hasReferralLeadAddress: result.rows[0]?.has_referral_lead_address ?? false,
-    hasAgentTable: result.rows[0]?.has_agent_table ?? false,
-    hasAgentLinkedUserLogin: result.rows[0]?.has_agent_linked_user_login ?? false,
     hasUserTable: result.rows[0]?.has_user_table ?? false,
     hasUserAccessLevel: result.rows[0]?.has_user_access_level ?? false,
   };

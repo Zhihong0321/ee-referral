@@ -77,16 +77,19 @@ export async function findInternalAppUser(authUser: AuthHubUser): Promise<Intern
   }>(
     `
       SELECT id, bubble_id, name
-      FROM agent
+      FROM "user"
       WHERE (
         $1::text IS NOT NULL
-        AND bubble_id = $1
+        AND (bubble_id = $1 OR id::text = $1)
       )
-      OR linked_user_login = $2
+      OR (
+        $2::text IS NOT NULL
+        AND bubble_id = $2
+      )
       ORDER BY
         CASE
-          WHEN $1::text IS NOT NULL AND bubble_id = $1 THEN 0
-          WHEN linked_user_login = $2 THEN 1
+          WHEN $1::text IS NOT NULL AND (bubble_id = $1 OR id::text = $1) THEN 0
+          WHEN $2::text IS NOT NULL AND bubble_id = $2 THEN 1
           ELSE 2
         END,
         updated_at DESC NULLS LAST,
