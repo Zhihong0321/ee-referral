@@ -33,15 +33,15 @@ WHATSAPP_AGENT_BAILEYS_SESSION_ID="same-session-id"
 WHATSAPP_AGENT_TENANT_ID="same-tenant-id"
 ```
 
-Use the same LLM configuration when you want the assistant to behave consistently:
+Use the same multimodal AI configuration when you want the assistant to behave consistently:
 
 ```dotenv
-WHATSAPP_AGENT_LLM_BASE_URL="https://..."
-WHATSAPP_AGENT_LLM_MODEL="..."
-MINIMAX_API_KEY="..."
+AI_BASE_URL="https://.../v1"
+AI_MODEL="..."
+AI_API_KEY="..."
 ```
 
-Set the vision variables only when image uploads should work.
+The configured model must support images when image uploads should work.
 
 ### Direct database connection vs. SQL proxy
 

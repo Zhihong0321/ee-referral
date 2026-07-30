@@ -4,6 +4,8 @@ import { toCanonicalMalaysiaPhone, toPhoneMatchKey } from "@/lib/phone-normaliza
 import { query } from "@/lib/db";
 
 const DEFAULT_TENANT_ID = 1;
+const WEB_CHAT_SESSION_ID = "referral-assistant-web";
+const WEB_CHAT_CHANNEL_TYPE = "webchat";
 const REFERRAL_MARKER = "REFERRAL_ACCOUNT";
 const LEGACY_REFERRER_MARKER = "REFERRER_ACCOUNT";
 const REFERRAL_ACCOUNT_NAME = "Referral";
@@ -198,7 +200,7 @@ function getAgentConfig() {
   const proxyAuth = process.env.WHATSAPP_AGENT_PROXY_AUTH?.trim() || process.env.SANDBOX_PROXY_AUTH?.trim();
   const dbName = process.env.WHATSAPP_AGENT_PROXY_DB_NAME?.trim() || process.env.SANDBOX_PROXY_DB_NAME?.trim();
   const baileysBaseUrl = (process.env.WHATSAPP_AGENT_BAILEYS_BASE_URL?.trim() || "").replace(/\/$/, "");
-  const sessionId = process.env.WHATSAPP_AGENT_BAILEYS_SESSION_ID?.trim() || "";
+  const sessionId = WEB_CHAT_SESSION_ID;
   const tenantId = Number(process.env.WHATSAPP_AGENT_TENANT_ID || DEFAULT_TENANT_ID);
 
   return {
@@ -260,23 +262,20 @@ export function isWhatsappSuperAdminPhone(phone: string) {
 
 export async function ensureChannelSession() {
   const config = getAgentConfig();
-  if (!config.sessionId) {
-    throw new Error("WHATSAPP_AGENT_BAILEYS_SESSION_ID is not configured.");
-  }
   const rows = await runWhatsappAgentSql<{ id: number; metadata: Record<string, unknown> }>(
     `
       WITH existing AS (
         SELECT id, metadata
         FROM et_channel_sessions
         WHERE tenant_id = $1
-          AND channel_type = 'whatsapp'
-          AND session_identifier = $2
+          AND channel_type = $2
+          AND session_identifier = $3
         ORDER BY id ASC
         LIMIT 1
       ),
       inserted AS (
         INSERT INTO et_channel_sessions (tenant_id, channel_type, session_identifier, metadata)
-        SELECT $1, 'whatsapp', $2, '{}'::jsonb
+        SELECT $1, $2, $3, '{}'::jsonb
         WHERE NOT EXISTS (SELECT 1 FROM existing)
         RETURNING id, metadata
       )
@@ -285,11 +284,11 @@ export async function ensureChannelSession() {
       SELECT id, metadata FROM inserted
       LIMIT 1
     `,
-    [config.tenantId, config.sessionId],
+    [config.tenantId, WEB_CHAT_CHANNEL_TYPE, config.sessionId],
   );
 
   if (!rows[0]) {
-    throw new Error("Unable to ensure WhatsApp channel session.");
+    throw new Error("Unable to ensure referral assistant session.");
   }
 
   return rows[0];

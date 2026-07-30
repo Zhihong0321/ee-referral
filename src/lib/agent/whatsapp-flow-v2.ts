@@ -6,6 +6,7 @@
  */
 
 import { COMPANY_LEGAL_NAME, REFERRAL_TERMS } from "@/lib/terms";
+import { getAiConfig, getOpenAiChatCompletionsUrl } from "@/lib/ai";
 import {
   appendAgentDebugLog,
   listWhatsappAgents,
@@ -37,29 +38,9 @@ import {
 } from "./whatsapp-history";
 
 const PORTAL_URL = process.env.WHATSAPP_AGENT_PORTAL_URL || "https://referral.atap.solar/";
-const LLM_BASE_URL = (process.env.WHATSAPP_AGENT_LLM_BASE_URL || "https://token-plan-sgp.xiaomimimo.com").replace(/\/$/, "");
-const LLM_MODEL = process.env.WHATSAPP_AGENT_LLM_MODEL || "mimo-v2.5-pro";
-const LLM_API_KEY = process.env.WHATSAPP_AGENT_LLM_API_KEY || process.env.MINIMAX_API_KEY || "";
 
 function getLlmConfig(baseUrl: string): { format: "anthropic" | "openai"; endpoint: string } {
-  const clean = baseUrl.replace(/\/$/, "");
-  const lower = clean.toLowerCase();
-
-  if (lower.includes("xiaomimimo") || lower.includes("minimax") || lower.includes("anthropic") || lower.endsWith("/messages")) {
-    let endpoint = clean;
-    if (!endpoint.endsWith("/messages")) {
-      if (endpoint.endsWith("/v1")) endpoint = `${endpoint}/messages`;
-      else endpoint = `${endpoint}/anthropic/v1/messages`;
-    }
-    return { format: "anthropic", endpoint };
-  }
-
-  let endpoint = clean;
-  if (!endpoint.endsWith("/chat/completions")) {
-    if (endpoint.endsWith("/v1")) endpoint = `${endpoint}/chat/completions`;
-    else endpoint = `${endpoint}/v1/chat/completions`;
-  }
-  return { format: "openai", endpoint };
+  return { format: "openai", endpoint: getOpenAiChatCompletionsUrl(baseUrl) };
 }
 
 
@@ -163,9 +144,7 @@ export async function runWhatsappAgentTurnV2(input: {
 }): Promise<{ reply: string; toolTrace: ToolTrace[] }> {
   const startedAt = Date.now();
 
-  if (!LLM_API_KEY) {
-    throw new Error("WHATSAPP_AGENT_LLM_API_KEY (or MINIMAX_API_KEY) is not set.");
-  }
+  getAiConfig();
 
   // Admin mode is a stateful session anyone can enter by sending "ee-admin"
   // and leave with "exit". The flag is persisted in agent state so it survives
@@ -458,20 +437,32 @@ async function callAgentModel(
     return { reply: "Too many tool calls. Please simplify your request.", toolTrace: [] };
   }
 
+  const ai = getAiConfig();
+  const LLM_BASE_URL = ai.baseUrl;
+  const LLM_MODEL = ai.model;
+  const LLM_API_KEY = ai.apiKey;
   const { format, endpoint } = getLlmConfig(LLM_BASE_URL);
   let blocks: ModelContentBlock[] = [];
 
   if (format === "openai") {
-    const oaiTools = tools.map((t: any) => ({
-      type: "function",
-      function: {
-        name: t.name,
-        description: t.description,
-        parameters: t.input_schema || t.parameters || { type: "object", properties: {} },
-      },
-    }));
+    const oaiTools = tools.map((tool) => {
+      const definition = tool as {
+        name: string;
+        description: string;
+        input_schema?: Record<string, unknown>;
+        parameters?: Record<string, unknown>;
+      };
+      return {
+        type: "function",
+        function: {
+          name: definition.name,
+          description: definition.description,
+          parameters: definition.input_schema || definition.parameters || { type: "object", properties: {} },
+        },
+      };
+    });
 
-    const oaiMessages: any[] = [];
+    const oaiMessages: Array<Record<string, unknown>> = [];
     if (system) {
       oaiMessages.push({ role: "system", content: system });
     }
@@ -486,14 +477,14 @@ async function callAgentModel(
             for (const tr of toolResults) {
               oaiMessages.push({
                 role: "tool",
-                tool_call_id: (tr as any).tool_use_id,
+                tool_call_id: tr.tool_use_id,
                 content: typeof tr.content === "string" ? tr.content : JSON.stringify(tr.content),
               });
             }
           } else {
             const text = msg.content
               .filter((b) => b.type === "text")
-              .map((b) => (b as any).text)
+              .map((b) => (b as { text: string }).text)
               .join("\n");
             oaiMessages.push({ role: "user", content: text });
           }

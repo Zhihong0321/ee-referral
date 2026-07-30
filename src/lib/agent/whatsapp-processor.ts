@@ -9,6 +9,7 @@ import {
 } from "@/lib/agent/whatsapp-data";
 import { runWhatsappAgentTurn } from "@/lib/agent/whatsapp-flow";
 import { runWhatsappAgentTurnV2 } from "@/lib/agent/whatsapp-flow-v2";
+import { getAiConfig, getOpenAiApiUrl } from "@/lib/ai";
 import { toCanonicalMalaysiaPhone } from "@/lib/phone-normalization";
 
 /**
@@ -189,70 +190,31 @@ async function transcribeWhatsappAudio(mediaUrl: string) {
     throw new Error(`Unable to download WhatsApp audio: HTTP ${audioResponse.status}`);
   }
 
-  const contentType = audioResponse.headers.get("content-type") || getAudioMimeType(resolvedUrl);
+  const contentType = (audioResponse.headers.get("content-type") || getAudioMimeType(resolvedUrl)).split(";")[0].trim();
   const audioBytes = await audioResponse.arrayBuffer();
-  const provider = (process.env.WHATSAPP_AGENT_ASR_PROVIDER || "").trim().toLowerCase();
-  if (provider !== "uniapi") {
-    throw new Error("Voice-note transcription requires WHATSAPP_AGENT_ASR_PROVIDER=uniapi.");
-  }
+  const ai = getAiConfig();
+  const form = new FormData();
+  const extension = contentType.includes("ogg") ? "ogg" : contentType.includes("webm") ? "webm" : contentType.includes("wav") ? "wav" : "mp3";
+  form.append("file", new Blob([audioBytes], { type: contentType }), `whatsapp-voice.${extension}`);
+  form.append("model", ai.model);
+  form.append("prompt", "Transcribe the WhatsApp voice note exactly in its original language.");
 
-  const uniApiKey = process.env.WHATSAPP_AGENT_UNIAPI_API_KEY || "";
-  if (!uniApiKey) {
-    throw new Error("WHATSAPP_AGENT_UNIAPI_API_KEY is not set.");
-  }
-
-  const baseUrl = (process.env.WHATSAPP_AGENT_UNIAPI_BASE_URL || "").replace(/\/$/, "");
-  if (!baseUrl) {
-    throw new Error("WHATSAPP_AGENT_UNIAPI_BASE_URL is not set.");
-  }
-
-  const model = process.env.WHATSAPP_AGENT_UNIAPI_ASR_MODEL || "";
-  if (!model) {
-    throw new Error("WHATSAPP_AGENT_UNIAPI_ASR_MODEL is not set.");
-  }
-
-  const audioBase64 = Buffer.from(audioBytes).toString("base64");
-  const response = await fetch(`${baseUrl}/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+  const response = await fetch(getOpenAiApiUrl(ai.baseUrl, "audio/transcriptions"), {
     method: "POST",
     headers: {
-      "x-goog-api-key": uniApiKey,
-      "Content-Type": "application/json",
+      "Authorization": `Bearer ${ai.apiKey}`,
     },
-    body: JSON.stringify({
-      contents: [
-        {
-          role: "user",
-          parts: [
-            {
-              text: "Transcribe this WhatsApp voice note exactly. Return only the transcript text. If the speech is not English, Malay, or Chinese, still transcribe in the original language.",
-            },
-            {
-              inline_data: {
-                mime_type: contentType,
-                data: audioBase64,
-              },
-            },
-          ],
-        },
-      ],
-    }),
+    body: form,
   });
   const text = await response.text();
   if (!response.ok) {
-    throw new Error(`UniAPI ASR failed: HTTP ${response.status}: ${text.slice(0, 300)}`);
+    throw new Error(`AI transcription failed: HTTP ${response.status}: ${text.slice(0, 300)}`);
   }
 
-  const payload = JSON.parse(text) as {
-    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-  };
-  const transcript =
-    payload.candidates?.[0]?.content?.parts
-      ?.map((part) => part.text?.trim() || "")
-      .filter(Boolean)
-      .join("\n")
-      .trim() || "";
+  const payload = JSON.parse(text) as { text?: string };
+  const transcript = payload.text?.trim() || "";
   if (transcript) return transcript;
-  throw new Error("UniAPI ASR returned an empty transcript.");
+  throw new Error("AI transcription returned an empty transcript.");
 }
 
 async function describeWhatsappVisual(mediaUrl: string, messageType: "image" | "video", caption: string) {
@@ -280,17 +242,7 @@ export async function convertVisualBytesToText(input: {
   caption: string;
 }) {
   const { contentType, base64: mediaBase64, messageType, caption } = input;
-  const apiKey = process.env.WHATSAPP_AGENT_VISION_API_KEY || "";
-  if (!apiKey) {
-    throw new Error("Vision API key is not set.");
-  }
-
-  const baseUrl = (process.env.WHATSAPP_AGENT_VISION_BASE_URL || "https://api.apikey.fun/v1").replace(/\/$/, "");
-  if (!baseUrl) {
-    throw new Error("Vision API base URL is not set.");
-  }
-
-  const model = process.env.WHATSAPP_AGENT_VISION_MODEL || "gpt-5.4-mini";
+  const ai = getAiConfig();
 
   const promptText = [
     `Convert this WhatsApp ${messageType} into plain text for a referral assistant.`,
@@ -309,14 +261,14 @@ export async function convertVisualBytesToText(input: {
   const timeoutId = setTimeout(() => abortController.abort(), 60000); // 60 seconds timeout
 
   try {
-    const response = await fetch(`${baseUrl}/chat/completions`, {
+    const response = await fetch(ai.chatCompletionsUrl, {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${apiKey}`,
+        "Authorization": `Bearer ${ai.apiKey}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: model,
+        model: ai.model,
         messages: [
           {
             role: "user",
@@ -339,7 +291,7 @@ export async function convertVisualBytesToText(input: {
 
     const text = await response.text();
     if (!response.ok) {
-      throw new Error(`Vision API failed: HTTP ${response.status}: ${text.slice(0, 300)}`);
+      throw new Error(`AI vision failed: HTTP ${response.status}: ${text.slice(0, 300)}`);
     }
 
     const payload = JSON.parse(text) as {
@@ -348,11 +300,11 @@ export async function convertVisualBytesToText(input: {
 
     const converted = payload.choices?.[0]?.message?.content?.trim() || "";
     if (converted) return converted;
-    throw new Error(`Vision API returned empty text.`);
+    throw new Error(`AI vision returned empty text.`);
   } catch (error) {
     clearTimeout(timeoutId);
     if (error instanceof Error && error.name === "AbortError") {
-      throw new Error(`Vision API timed out after 60 seconds.`);
+      throw new Error(`AI vision timed out after 60 seconds.`);
     }
     throw error;
   }

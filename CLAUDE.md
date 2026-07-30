@@ -24,8 +24,9 @@ state.
 Required:
 
 - `DATABASE_URL` or the configured SQL proxy variables
-- `MINIMAX_API_KEY` or `WHATSAPP_AGENT_LLM_API_KEY`
-- `WHATSAPP_AGENT_VISION_API_KEY`
+- `AI_API_KEY`
+- `AI_BASE_URL`
+- `AI_MODEL`
 - `WHATSAPP_AGENT_PROCESS_SECRET`
 - `WHATSAPP_AGENT_DEBUG_SECRET`
 - Baileys URL/session settings

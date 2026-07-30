@@ -14,7 +14,7 @@ No credential files are copied from the main application.
 
 1. Copy `.env.example` to `.env.local`.
 2. Set the same `DATABASE_URL`, `JWT_SECRET`, `WHATSAPP_AGENT_BAILEYS_SESSION_ID`, and `WHATSAPP_AGENT_TENANT_ID` used by the current referral app.
-3. Add `MINIMAX_API_KEY`. Add the vision variables if image uploads should work.
+3. Add `AI_API_KEY`, `AI_BASE_URL`, and `AI_MODEL`. The model must support images for uploads.
 4. Install and start:
 
    ```bash

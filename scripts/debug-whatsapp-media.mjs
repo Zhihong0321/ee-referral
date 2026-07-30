@@ -84,12 +84,9 @@ function getConfig() {
     dbName,
     databaseUrl: process.env.DATABASE_URL || "",
     baileysBaseUrl,
-    llmModel: process.env.WHATSAPP_AGENT_LLM_MODEL || "MiniMax-M3",
-    hasLlmApiKey: Boolean(process.env.WHATSAPP_AGENT_LLM_API_KEY || process.env.MINIMAX_API_KEY),
-    asrProvider: process.env.WHATSAPP_AGENT_ASR_PROVIDER || "",
-    asrModel: process.env.WHATSAPP_AGENT_UNIAPI_ASR_MODEL || "",
-    hasUniApiKey: Boolean(process.env.WHATSAPP_AGENT_UNIAPI_API_KEY),
-    uniApiBaseUrl: (process.env.WHATSAPP_AGENT_UNIAPI_BASE_URL || "").replace(/\/$/, ""),
+    aiModel: process.env.AI_MODEL || "",
+    hasAiApiKey: Boolean(process.env.AI_API_KEY),
+    aiBaseUrl: (process.env.AI_BASE_URL || "").replace(/\/$/, ""),
   };
 }
 
@@ -341,17 +338,8 @@ function audioMimeType(url) {
 
 async function transcribeUrl(url) {
   const config = getConfig();
-  if (config.asrProvider !== "uniapi") {
-    throw new Error("ASR debug requires WHATSAPP_AGENT_ASR_PROVIDER=uniapi.");
-  }
-  if (!config.hasUniApiKey) {
-    throw new Error("ASR debug requires WHATSAPP_AGENT_UNIAPI_API_KEY.");
-  }
-  if (!config.uniApiBaseUrl) {
-    throw new Error("ASR debug requires WHATSAPP_AGENT_UNIAPI_BASE_URL.");
-  }
-  if (!config.asrModel) {
-    throw new Error("ASR debug requires WHATSAPP_AGENT_UNIAPI_ASR_MODEL.");
+  if (!config.hasAiApiKey || !config.aiBaseUrl || !config.aiModel) {
+    throw new Error("ASR debug requires AI_API_KEY, AI_BASE_URL, and AI_MODEL.");
   }
 
   const resolved = resolveMediaUrl(url);
@@ -361,42 +349,31 @@ async function transcribeUrl(url) {
   }
 
   const bytes = await audioResponse.arrayBuffer();
-  const contentType = audioResponse.headers.get("content-type") || audioMimeType(resolved);
+  const contentType = (audioResponse.headers.get("content-type") || audioMimeType(resolved)).split(";")[0].trim();
+  const extension = contentType.includes("ogg") ? "ogg" : contentType.includes("webm") ? "webm" : contentType.includes("wav") ? "wav" : "mp3";
+  const form = new FormData();
+  form.append("file", new Blob([bytes], { type: contentType }), `whatsapp-voice.${extension}`);
+  form.append("model", config.aiModel);
+  form.append("prompt", "Transcribe the WhatsApp voice note exactly in its original language.");
 
-  const response = await fetch(`${config.uniApiBaseUrl}/v1beta/models/${encodeURIComponent(config.asrModel)}:generateContent`, {
+  const response = await fetch(`${config.aiBaseUrl}/audio/transcriptions`, {
     method: "POST",
     headers: {
-      "x-goog-api-key": process.env.WHATSAPP_AGENT_UNIAPI_API_KEY,
-      "Content-Type": "application/json",
+      Authorization: `Bearer ${process.env.AI_API_KEY}`,
     },
-    body: JSON.stringify({
-      contents: [
-        {
-          role: "user",
-          parts: [
-            { text: "Transcribe this WhatsApp voice note exactly. Return only the transcript text." },
-            { inline_data: { mime_type: contentType, data: Buffer.from(bytes).toString("base64") } },
-          ],
-        },
-      ],
-    }),
+    body: form,
   });
   const text = await response.text();
   if (!response.ok) {
-    throw new Error(`UniAPI ASR HTTP ${response.status}: ${text.slice(0, 500)}`);
+    throw new Error(`AI transcription HTTP ${response.status}: ${text.slice(0, 500)}`);
   }
   const payload = JSON.parse(text);
   return {
     url: resolved,
-    provider: "uniapi",
-    endpoint: `${config.uniApiBaseUrl}/v1beta/models/${config.asrModel}:generateContent`,
-    model: config.asrModel,
-    transcript:
-      payload.candidates?.[0]?.content?.parts
-        ?.map((part) => part.text?.trim() || "")
-        .filter(Boolean)
-        .join("\n")
-        .trim() || "",
+    provider: "openai-compatible",
+    endpoint: `${config.aiBaseUrl}/audio/transcriptions`,
+    model: config.aiModel,
+    transcript: payload.text?.trim() || "",
     response: payload,
   };
 }

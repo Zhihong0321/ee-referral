@@ -67,8 +67,8 @@ enforced in code, not just the prompt:
   mechanically. Runs against a dedicated test phone; prints a manual cleanup SQL
   for any rows it creates (prod deletes require explicit approval).
 
-Run the dev server with the correct `MINIMAX_API_KEY` exported into its
-environment (a stale OS-level `MINIMAX_API_KEY` will otherwise override
+Run the dev server with the correct `AI_API_KEY` exported into its
+environment (a stale OS-level `AI_API_KEY` will otherwise override
 `.env.local` and cause 401s), then:
 
 ```

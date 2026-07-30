@@ -1,4 +1,5 @@
 import { COMPANY_LEGAL_NAME, REFERRAL_TERMS } from "@/lib/terms";
+import { getAiConfig } from "@/lib/ai";
 import {
   appendAgentDebugLog,
   listWhatsappAgents,
@@ -19,16 +20,6 @@ import { toCanonicalMalaysiaPhone } from "@/lib/phone-normalization";
 import { matchAgentName } from "@/lib/agent/whatsapp-intent";
 
 const PORTAL_URL = process.env.WHATSAPP_AGENT_PORTAL_URL || "https://referral.atap.solar/";
-const LLM_BASE_URL = (process.env.WHATSAPP_AGENT_LLM_BASE_URL || "https://token-plan-sgp.xiaomimimo.com").replace(/\/$/, "");
-const LLM_MODEL = process.env.WHATSAPP_AGENT_LLM_MODEL || "mimo-v2.5-pro";
-const LLM_API_KEY = process.env.WHATSAPP_AGENT_LLM_API_KEY || process.env.MINIMAX_API_KEY || "";
-
-function getLlmEndpoint(baseUrl: string): string {
-  const clean = baseUrl.replace(/\/$/, "");
-  if (clean.endsWith("/messages")) return clean;
-  if (clean.endsWith("/v1")) return `${clean}/messages`;
-  return `${clean}/anthropic/v1/messages`;
-}
 
 const WRITE_CLAIM_PATTERN =
   /\b(?:done|all set)\b|\b(?:i(?:'ve| have)?|we(?:'ve| have)?)\s+(?:added|saved|updated|assigned|registered|notified|changed)\b|已(?:添加|保存|更新|分配|登记|注册)|添加成功|保存成功|berjaya (?:simpan|tambah|daftar)|sudah (?:simpan|tambah|daftar)/i;
@@ -225,46 +216,111 @@ async function callAgentModel(
 ): Promise<{ reply: string; toolTrace: WhatsappWorkflowTrace[] }> {
   if (depth > 5) return { reply: "Too many operations. Please try again.", toolTrace: [] };
 
-  const body: Record<string, unknown> = {
-    model: LLM_MODEL,
-    max_tokens: 700,
-    system,
-    messages,
-  };
-  if (tools && tools.length > 0) {
-    body.tools = tools;
+  const ai = getAiConfig();
+  const LLM_MODEL = ai.model;
+  const LLM_API_KEY = ai.apiKey;
+
+  const openAiTools = (tools || []).map((tool) => {
+    const definition = tool as {
+      name: string;
+      description: string;
+      input_schema?: Record<string, unknown>;
+      parameters?: Record<string, unknown>;
+    };
+    return {
+      type: "function",
+      function: {
+        name: definition.name,
+        description: definition.description,
+        parameters: definition.input_schema || definition.parameters || { type: "object", properties: {} },
+      },
+    };
+  });
+  const openAiMessages: Array<Record<string, unknown>> = [{ role: "system", content: system }];
+
+  for (const message of messages) {
+    if (typeof message.content === "string") {
+      openAiMessages.push({ role: message.role, content: message.content });
+      continue;
+    }
+
+    if (message.role === "user") {
+      const toolResults = message.content.filter((block) => block.type === "tool_result");
+      if (toolResults.length > 0) {
+        for (const result of toolResults) {
+          openAiMessages.push({
+            role: "tool",
+            tool_call_id: result.tool_use_id,
+            content: result.content,
+          });
+        }
+      }
+      continue;
+    }
+
+    const textBlock = message.content.find((block) => block.type === "text") as { text: string } | undefined;
+    const toolUseBlocks = message.content.filter((block) => block.type === "tool_use") as Array<{
+      id: string;
+      name: string;
+      input: Record<string, unknown>;
+    }>;
+    openAiMessages.push({
+      role: "assistant",
+      content: textBlock?.text || null,
+      tool_calls: toolUseBlocks.map((toolUse) => ({
+        id: toolUse.id,
+        type: "function",
+        function: { name: toolUse.name, arguments: JSON.stringify(toolUse.input) },
+      })),
+    });
   }
 
-  const response = await fetch(getLlmEndpoint(LLM_BASE_URL), {
+  const response = await fetch(ai.chatCompletionsUrl, {
     method: "POST",
     headers: {
-      "authorization": `Bearer ${LLM_API_KEY}`,
-      "x-api-key": LLM_API_KEY,
-      "api-key": LLM_API_KEY,
-      "anthropic-version": "2023-06-01",
+      "Authorization": `Bearer ${LLM_API_KEY}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify(body),
+    body: JSON.stringify({
+      model: LLM_MODEL,
+      messages: openAiMessages,
+      tools: openAiTools.length > 0 ? openAiTools : undefined,
+    }),
   });
   const text = await response.text();
   if (!response.ok) {
-    throw new Error(`LLM HTTP ${response.status} [endpoint: ${getLlmEndpoint(LLM_BASE_URL)}, model: ${LLM_MODEL}]: ${text.slice(0, 300)}`);
+    throw new Error(`AI HTTP ${response.status} [endpoint: ${ai.chatCompletionsUrl}, model: ${LLM_MODEL}]: ${text.slice(0, 300)}`);
   }
 
   const payload = JSON.parse(text) as {
-    content?: ModelContentBlock[];
-    stop_reason?: string;
-    base_resp?: { status_code?: number; status_msg?: string };
+    choices?: Array<{
+      message?: {
+        content?: string;
+        tool_calls?: Array<{
+          id: string;
+          function: { name: string; arguments: string | Record<string, unknown> };
+        }>;
+      };
+    }>;
   };
-  if (payload.base_resp?.status_code) {
-    throw new Error(`LLM error: ${payload.base_resp.status_msg || payload.base_resp.status_code}`);
+  const choiceMessage = payload.choices?.[0]?.message;
+  const blocks: ModelContentBlock[] = [];
+  if (choiceMessage?.content?.trim()) {
+    blocks.push({ type: "text", text: choiceMessage.content.trim() });
   }
-
-  const blocks = payload.content || [];
+  for (const toolCall of choiceMessage?.tool_calls || []) {
+    let input: Record<string, unknown> = {};
+    try {
+      input = typeof toolCall.function.arguments === "string" ? JSON.parse(toolCall.function.arguments) : toolCall.function.arguments;
+    } catch {
+      input = {};
+    }
+    blocks.push({ type: "tool_use", id: toolCall.id, name: toolCall.function.name, input });
+  }
   const textBlock = blocks.find((b) => b.type === "text") as { text: string } | undefined;
   const replyText = textBlock?.text?.trim() || "";
 
-  if (payload.stop_reason === "tool_use" || blocks.some((b) => b.type === "tool_use")) {
+  if (blocks.some((b) => b.type === "tool_use")) {
     messages.push({ role: "assistant", content: blocks });
     
     const toolResults: ModelContentBlock[] = [];
@@ -365,9 +421,7 @@ export async function runWhatsappAgentTurn(input: { senderPhone: string; text: s
     return { reply: workflow.reply, toolTrace: workflow.toolTrace };
   }
 
-  if (!LLM_API_KEY) {
-    throw new Error("WHATSAPP_AGENT_LLM_API_KEY (or MINIMAX_API_KEY) is not set.");
-  }
+  getAiConfig();
 
   const admin = isAdminAuthorized(input.senderPhone);
   const systemPrompt = buildSystemPrompt(referrer, leads, agents) + (admin ? "\n\nYou are currently in ADMIN MODE. You have full access to database tools to manage referrers and leads. Use them when requested." : "");

@@ -88,8 +88,9 @@ Railway environment variables to set:
 - `WHATSAPP_AGENT_BAILEYS_SESSION_ID`
 - `WHATSAPP_AGENT_PROCESS_SECRET`
 - `WHATSAPP_AGENT_DEBUG_SECRET`
-- `MINIMAX_API_KEY` or `WHATSAPP_AGENT_LLM_API_KEY`
-- `WHATSAPP_AGENT_VISION_API_KEY`
+- `AI_API_KEY`
+- `AI_BASE_URL`
+- `AI_MODEL`
 
 ## WhatsApp Agent Inbound Processing
 
@@ -116,7 +117,7 @@ Media handling:
 - `contact` / `contacts`: parsed from `raw_payload.message.contactMessage` or `contactsArrayMessage`, then saved through the deterministic lead workflow.
 - `image`: `media_url` is resolved and sent to the configured vision model for extraction, then saved through the deterministic lead workflow when a phone is present.
 - `video`: `media_url` is resolved and sent to the configured vision model for extraction.
-- `audio` / voice note: `media_url` is downloaded and sent to ASR first, then the transcript is sent to the agent. The verified provider path is UniAPI's Gemini-compatible API with `WHATSAPP_AGENT_ASR_PROVIDER=uniapi`, `WHATSAPP_AGENT_UNIAPI_BASE_URL=https://api.uniapi.io/gemini`, and `WHATSAPP_AGENT_UNIAPI_API_KEY`.
+- `audio` / voice note: `media_url` is downloaded and sent to the configured OpenAI-compatible `/audio/transcriptions` endpoint, then the transcript is sent to the agent.
 - `document` / `sticker`: caption, filename, and media URL are preserved; the agent asks for missing text details when the content is not extractable.
 
 Webhook/testing payloads are still supported through:

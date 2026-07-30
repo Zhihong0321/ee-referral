@@ -6,7 +6,7 @@
     "dev": "next dev",
     "test": "node --test --experimental-strip-types --no-warnings tests/*.test.ts",
     "build": "next build",
-    "start": "node scripts/start-with-whatsapp-worker.mjs",
+    "start": "node scripts/start-server.mjs",
     "lint": "eslint",
     "whatsapp:worker": "node scripts/whatsapp-agent-worker.mjs",
     "whatsapp:debug-media": "node scripts/debug-whatsapp-media.mjs",

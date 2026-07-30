@@ -30,4 +30,4 @@ COPY --from=builder --chown=nextjs:nodejs /app/scripts ./scripts
 USER nextjs
 EXPOSE 3000
 
-CMD ["node", "scripts/start-with-whatsapp-worker.mjs"]
+CMD ["node", "scripts/start-server.mjs"]

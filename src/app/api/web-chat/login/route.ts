@@ -39,7 +39,8 @@ export async function POST(request: Request) {
       referrerName: referrer.name,
       isNew: history.length === 0,
     });
-  } catch {
+  } catch (error) {
+    console.error("[web-chat] login failed:", error instanceof Error ? error.message : error);
     return NextResponse.json({ error: "Unable to log in right now. Please try again." }, { status: 500 });
   }
 }

@@ -1,3 +1,5 @@
+import { getAiConfig } from "@/lib/ai";
+
 export async function convertVisualBytesToText(input: {
   contentType: string;
   base64: string;
@@ -5,17 +7,7 @@ export async function convertVisualBytesToText(input: {
   caption: string;
 }) {
   const { contentType, base64: mediaBase64, messageType, caption } = input;
-  const apiKey = process.env.WHATSAPP_AGENT_VISION_API_KEY || "";
-  if (!apiKey) {
-    throw new Error("Vision API key is not set.");
-  }
-
-  const baseUrl = (process.env.WHATSAPP_AGENT_VISION_BASE_URL || "https://api.apikey.fun/v1").replace(/\/$/, "");
-  if (!baseUrl) {
-    throw new Error("Vision API base URL is not set.");
-  }
-
-  const model = process.env.WHATSAPP_AGENT_VISION_MODEL || "gpt-5.4-mini";
+  const ai = getAiConfig();
   const promptText = [
     `Convert this WhatsApp ${messageType} into plain text for a referral assistant.`,
     "Look specifically for referral contact details in name cards, business cards, handwritten notes, forms, screenshots, posters, chat screenshots, and cropped photos.",
@@ -33,14 +25,14 @@ export async function convertVisualBytesToText(input: {
   const timeoutId = setTimeout(() => abortController.abort(), 60_000);
 
   try {
-    const response = await fetch(`${baseUrl}/chat/completions`, {
+    const response = await fetch(ai.chatCompletionsUrl, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${apiKey}`,
+        Authorization: `Bearer ${ai.apiKey}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model,
+        model: ai.model,
         messages: [
           {
             role: "user",
