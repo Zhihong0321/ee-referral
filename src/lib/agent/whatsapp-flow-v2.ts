@@ -560,9 +560,14 @@ async function callAgentModel(
         } catch {
           parsedInput = {};
         }
+        // Some OpenAI-compatible providers omit a tool-call ID. Generate one so the
+        // matching tool result always contains the required `tool_call_id` field.
+        const toolCallId = typeof tc.id === "string" && tc.id.trim()
+          ? tc.id
+          : `call_${crypto.randomUUID()}`;
         blocks.push({
           type: "tool_use",
-          id: tc.id,
+          id: toolCallId,
           name: tc.function.name,
           input: parsedInput,
         });

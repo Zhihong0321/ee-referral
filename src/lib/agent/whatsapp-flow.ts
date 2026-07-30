@@ -315,7 +315,12 @@ async function callAgentModel(
     } catch {
       input = {};
     }
-    blocks.push({ type: "tool_use", id: toolCall.id, name: toolCall.function.name, input });
+    // Some OpenAI-compatible providers omit a tool-call ID. Generate one so the
+    // matching tool result always contains the required `tool_call_id` field.
+    const toolCallId = typeof toolCall.id === "string" && toolCall.id.trim()
+      ? toolCall.id
+      : `call_${crypto.randomUUID()}`;
+    blocks.push({ type: "tool_use", id: toolCallId, name: toolCall.function.name, input });
   }
   const textBlock = blocks.find((b) => b.type === "text") as { text: string } | undefined;
   const replyText = textBlock?.text?.trim() || "";
