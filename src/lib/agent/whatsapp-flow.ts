@@ -247,13 +247,13 @@ async function callAgentModel(
     if (message.role === "user") {
       const toolResults = message.content.filter((block) => block.type === "tool_result");
       if (toolResults.length > 0) {
-        for (const result of toolResults) {
-          openAiMessages.push({
-            role: "tool",
-            tool_call_id: result.tool_use_id,
-            content: result.content,
-          });
-        }
+        // The configured router rejects OpenAI's `role: "tool"` messages even
+        // when their tool_call_id is valid. Preserve the result as trusted
+        // server context instead, so compatible providers can continue the turn.
+        openAiMessages.push({
+          role: "user",
+          content: `[Server tool results]\n${toolResults.map((result) => result.content).join("\n")}\n\nUse these results to continue your response.`,
+        });
       }
       continue;
     }
@@ -264,15 +264,12 @@ async function callAgentModel(
       name: string;
       input: Record<string, unknown>;
     }>;
-    openAiMessages.push({
-      role: "assistant",
-      content: textBlock?.text || null,
-      tool_calls: toolUseBlocks.map((toolUse) => ({
-        id: toolUse.id,
-        type: "function",
-        function: { name: toolUse.name, arguments: JSON.stringify(toolUse.input) },
-      })),
-    });
+    // Do not resend an assistant tool-call turn: the router rejects the required
+    // follow-up `role: "tool"` message. The next user turn contains the trusted
+    // server-side tool result instead.
+    if (textBlock?.text) {
+      openAiMessages.push({ role: "assistant", content: textBlock.text });
+    }
   }
 
   const response = await fetch(ai.chatCompletionsUrl, {

@@ -466,13 +466,13 @@ async function callAgentModel(
         if (msg.role === "user") {
           const toolResults = msg.content.filter((b) => b.type === "tool_result");
           if (toolResults.length > 0) {
-            for (const tr of toolResults) {
-              oaiMessages.push({
-                role: "tool",
-                tool_call_id: (tr as any).tool_use_id,
-                content: typeof tr.content === "string" ? tr.content : JSON.stringify(tr.content),
-              });
-            }
+            // The configured router rejects OpenAI's `role: "tool"` messages even
+            // when their tool_call_id is valid. Preserve results as trusted server
+            // context so compatible providers can continue the tool loop.
+            oaiMessages.push({
+              role: "user",
+              content: `[Server tool results]\n${toolResults.map((tr) => typeof tr.content === "string" ? tr.content : JSON.stringify(tr.content)).join("\n")}\n\nUse these results to continue your response.`,
+            });
           } else {
             const text = msg.content
               .filter((b) => b.type === "text")
@@ -488,18 +488,12 @@ async function callAgentModel(
             input: Record<string, unknown>;
           }>;
           if (toolUseBlocks.length > 0) {
-            oaiMessages.push({
-              role: "assistant",
-              content: textBlock?.text || null,
-              tool_calls: toolUseBlocks.map((tu) => ({
-                id: tu.id,
-                type: "function",
-                function: {
-                  name: tu.name,
-                  arguments: JSON.stringify(tu.input),
-                },
-              })),
-            });
+            // Do not resend an assistant tool-call turn: the router rejects the
+            // required follow-up `role: "tool"` message. The next user turn
+            // contains the trusted server-side tool result instead.
+            if (textBlock?.text) {
+              oaiMessages.push({ role: "assistant", content: textBlock.text });
+            }
           } else {
             oaiMessages.push({ role: "assistant", content: textBlock?.text || "" });
           }
