@@ -4,6 +4,7 @@ import {
   type ReferralRow,
   type ReferrerAccount,
 } from "@/lib/referrals";
+import { writeActivityLog } from "@/lib/activity-log";
 
 const REFERRAL_MARKER = "REFERRAL_ACCOUNT";
 const LEGACY_REFERRER_MARKER = "REFERRER_ACCOUNT";
@@ -381,8 +382,39 @@ export async function createSandboxReferral(input: LeadCreateInput): Promise<{ r
     ],
   );
 
+  const referralId = rows[0].id;
+  await writeActivityLog((text, params) => runProxySql(text, params), {
+    action: "create",
+    actor: {
+      kind: "visitor",
+      ref: referrer.customerId,
+      name: referrer.name,
+      role: "agent_sandbox_referrer",
+    },
+    entityId: referralId,
+    entityLabel: input.leadName,
+    description: "Referral created through the agent sandbox.",
+    fields: [
+      "leadName",
+      "leadMobileNumber",
+      "leadState",
+      "leadCity",
+      "leadAddress",
+      "relationship",
+      "projectType",
+      "preferredAgentId",
+      "remark",
+    ],
+    metadata: {
+      channel: "agent_sandbox",
+      referrerCustomerId: referrer.customerId,
+      referral: input,
+    },
+    sourceUrl: "/api/agent-sandbox/chat",
+  });
+
   return {
-    referralId: rows[0].id,
+    referralId,
     referrer,
   };
 }

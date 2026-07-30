@@ -207,12 +207,18 @@ export async function editReferralAction(formData: FormData) {
 
 export async function updateReferralWorkflowAction(formData: FormData) {
   try {
-    await requireManagerUser();
+    const manager = await requireManagerUser();
 
     await updateReferralManagerWorkflow({
       referralId: Number(formData.get("referralId") ?? "0"),
       assignedAgentId: String(formData.get("assignedAgentId") ?? ""),
       status: normalizeStatus(String(formData.get("status") ?? "Pending")),
+      actor: {
+        kind: "staff",
+        ref: manager.bubbleId,
+        name: manager.name,
+        role: manager.accessLevels.join(", "),
+      },
     });
 
     revalidatePath("/dashboard");

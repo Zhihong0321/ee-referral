@@ -62,6 +62,11 @@ export async function adminUpdateReferralWorkflowAction(formData: FormData) {
       referralId: Number(formData.get("referralId") ?? "0"),
       assignedAgentId: String(formData.get("assignedAgentId") ?? ""),
       status: normalizeStatus(String(formData.get("status") ?? "Pending")),
+      actor: {
+        kind: "admin_session",
+        name: "Admin portal",
+        role: "admin",
+      },
     });
 
     revalidatePath("/admin");

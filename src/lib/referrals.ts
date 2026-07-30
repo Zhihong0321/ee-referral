@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { PoolClient, QueryResultRow } from "pg";
 
 import type { AuthHubUser } from "@/lib/auth";
+import { type ActivityLogActor, writeActivityLog } from "@/lib/activity-log";
 import { getPool, query } from "@/lib/db";
 
 const REFERRAL_MARKER = "REFERRAL_ACCOUNT";
@@ -1011,13 +1012,44 @@ export async function createReferral(
       referralValues.push(parsed.data.leadAddress || null);
     }
 
-    await client.query(
+    const insertedReferral = await client.query<{ id: number }>(
       `
         INSERT INTO referral (${referralColumns.join(", ")})
         VALUES (${referralValues.map((_, index) => `$${index + 1}`).join(", ")})
+        RETURNING id
       `,
       referralValues,
     );
+
+    await writeActivityLog((text, params) => client.query(text, params), {
+      action: "create",
+      actor: {
+        kind: "visitor",
+        ref: referrer.customerId,
+        name: referrer.name,
+        role: "referrer",
+      },
+      entityId: insertedReferral.rows[0].id,
+      entityLabel: parsed.data.leadName,
+      description: "Referral created from the dashboard.",
+      fields: [
+        "leadName",
+        "leadMobileNumber",
+        "leadState",
+        "leadCity",
+        "leadAddress",
+        "relationship",
+        "projectType",
+        "preferredAgentId",
+        "remark",
+      ],
+      metadata: {
+        channel: "dashboard",
+        referrerCustomerId: referrer.customerId,
+        referral: parsed.data,
+      },
+      sourceUrl: "/dashboard",
+    });
 
     await client.query("COMMIT");
   } catch (error) {
@@ -1196,6 +1228,35 @@ export async function updateReferral(
       await updateLeadRecord(client, existing.rows[0].linked_invoice, referrer.customerId, parsed.data);
     }
 
+    await writeActivityLog((text, params) => client.query(text, params), {
+      action: "update",
+      actor: {
+        kind: "visitor",
+        ref: referrer.customerId,
+        name: referrer.name,
+        role: "referrer",
+      },
+      entityId: parsed.data.referralId,
+      entityLabel: parsed.data.leadName,
+      description: "Referral updated from the dashboard.",
+      fields: [
+        "leadName",
+        "leadMobileNumber",
+        "leadState",
+        "leadCity",
+        "leadAddress",
+        "relationship",
+        "projectType",
+        "preferredAgentId",
+      ],
+      metadata: {
+        channel: "dashboard",
+        referrerCustomerId: referrer.customerId,
+        referral: parsed.data,
+      },
+      sourceUrl: "/dashboard",
+    });
+
     await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK");
@@ -1210,7 +1271,9 @@ export async function updateReferral(
   }
 }
 
-export async function updateReferralManagerWorkflow(input: z.input<typeof managerReferralUpdateSchema>): Promise<void> {
+export async function updateReferralManagerWorkflow(
+  input: z.input<typeof managerReferralUpdateSchema> & { actor: ActivityLogActor },
+): Promise<void> {
   const parsed = managerReferralUpdateSchema.safeParse(input);
 
   if (!parsed.success) {
@@ -1231,7 +1294,7 @@ export async function updateReferralManagerWorkflow(input: z.input<typeof manage
 
     const assignedAgentId = await normalizeAgentId(client, parsed.data.assignedAgentId, "Assigned agent");
 
-    await client.query(
+    const updatedReferral = await client.query<{ id: number; name: string | null }>(
       `
         UPDATE referral
         SET
@@ -1239,9 +1302,29 @@ export async function updateReferralManagerWorkflow(input: z.input<typeof manage
           status = $2,
           updated_at = NOW()
         WHERE id = $3
+        RETURNING id, name
       `,
       [assignedAgentId, parsed.data.status, parsed.data.referralId],
     );
+
+    if (updatedReferral.rows.length === 0) {
+      throw new ReferralError("Referral record not found.");
+    }
+
+    await writeActivityLog((text, params) => client.query(text, params), {
+      action: "update",
+      actor: input.actor,
+      entityId: parsed.data.referralId,
+      entityLabel: updatedReferral.rows[0].name,
+      description: "Referral workflow updated.",
+      fields: ["assignedAgentId", "status"],
+      metadata: {
+        channel: "manager_workflow",
+        assignedAgentId,
+        status: parsed.data.status,
+      },
+      sourceUrl: "/dashboard",
+    });
 
     await client.query("COMMIT");
   } catch (error) {

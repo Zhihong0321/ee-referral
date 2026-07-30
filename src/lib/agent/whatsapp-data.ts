@@ -1,4 +1,5 @@
 import { PROJECT_TYPE_OPTIONS, RELATIONSHIP_OPTIONS, type ProjectTypeOption, type ReferralRow, type RelationshipOption } from "@/lib/referrals";
+import { writeActivityLog } from "@/lib/activity-log";
 import { toCanonicalMalaysiaPhone, toPhoneMatchKey } from "@/lib/phone-normalization";
 import { query } from "@/lib/db";
 
@@ -1217,6 +1218,33 @@ export async function createWhatsappReferral(
   );
 
   const referralId = rows[0].id;
+  await writeActivityLog((text, params) => runWhatsappAgentSql(text, params), {
+    action: "create",
+    actor: {
+      kind: "visitor",
+      ref: referrer.customerId,
+      name: referrer.name,
+      role: "whatsapp_referrer",
+    },
+    entityId: referralId,
+    entityLabel: draft.leadName,
+    description: "Referral created through the WhatsApp agent.",
+    fields: ["leadName", "leadMobileNumber", "area", "relationship", "projectType", "preferredAgentId", "remark"],
+    metadata: {
+      channel: "whatsapp",
+      referrerCustomerId: referrer.customerId,
+      referral: {
+        leadName: draft.leadName,
+        leadMobileNumber: draft.leadMobileNumber,
+        area,
+        relationship: defaultRelationship,
+        projectType: defaultProjectType,
+        preferredAgentId,
+        remark,
+      },
+    },
+    sourceUrl: "/api/whatsapp-agent",
+  });
   const preferredAgentNotification = await dispatchPreferredAgentNotificationForReferral(referralId, preferredAgentId);
 
   return { referralId, preferredAgentNotification };
@@ -1303,6 +1331,30 @@ export async function updateWhatsappReferral(
       [mapping.noteKey, update.value || "", referrer.customerId, existing.lead_customer_id],
     );
   }
+
+  await writeActivityLog((text, params) => runWhatsappAgentSql(text, params), {
+    action: "update",
+    actor: {
+      kind: "visitor",
+      ref: referrer.customerId,
+      name: referrer.name,
+      role: "whatsapp_referrer",
+    },
+    entityId: update.referralId,
+    entityLabel: update.field === "leadName" ? update.value : existing.lead_name,
+    description: "Referral updated through the WhatsApp agent.",
+    fields: [update.field],
+    metadata: {
+      channel: "whatsapp",
+      referrerCustomerId: referrer.customerId,
+      leadCustomerId: existing.lead_customer_id,
+      update: {
+        field: update.field,
+        value: update.value,
+      },
+    },
+    sourceUrl: "/api/whatsapp-agent",
+  });
 
   const preferredAgentNotification =
     update.field === "preferredAgent"
