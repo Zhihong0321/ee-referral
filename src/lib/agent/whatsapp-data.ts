@@ -29,74 +29,47 @@ const PHONE_MATCH_KEY_SQL = `(CASE
     ELSE regexp_replace(COALESCE(c.phone, ''), '\\D', '', 'g')
   END)`;
 
-/**
- * Deterministic memory of the entities the V2 agent last worked on. Written
- * ONLY by application code after successful tool writes (never by the LLM),
- * injected into the system prompt so pronouns ("it", "him", "that lead")
- * keep an authoritative antecedent even after the raw turns age out of the
- * 20-turn history window. Entries older than one hour are ignored.
- */
-export type WhatsappEntityLedger = {
-  activeLead?: { referralId: number; leadName: string; leadPhone: string };
-  lastAgentDiscussed?: { agentName: string };
-  lastAction?: string;
-  updatedAt: string;
-};
-
-export type WhatsappAgentState = {
-  mode:
-    | "idle"
-    | "onboarding_name"
-    | "onboarding_bank"
-    | "collecting_lead"
-    | "selecting_update_lead"
-    | "selecting_update_field"
-    | "collecting_update_value"
-    | "confirming_update"
-    | "awaiting_preferred_agent"
-    | "admin_idle"
-    | "admin_searching_referrer"
-    | "admin_creating_referrer_name"
-    | "admin_creating_referrer_phone"
-    | "admin_selecting_referrer"
-    | "admin_adding_lead"
-    | "admin_awaiting_preferred_agent";
-  draft: Partial<WhatsappLeadDraft>;
-  nextField: WhatsappLeadField | null;
-  update?: Partial<WhatsappUpdateDraft>;
-  onboarding?: { name?: string };
-  activeLead?: { referralId: number; leadName: string; leadMobile: string; area: string };
-  updatedAt?: string;
-  lastLeadList?: Array<{ index: number; referralId: number; leadName: string }>;
-  entityLedger?: WhatsappEntityLedger;
-  adminContext?: {
-    adminPhone: string;
-    targetReferrer?: WhatsappReferrerAccount | null;
-    targetReferrerSearchResults?: Array<{ customerId: string; name: string | null; phone: string | null }>;
-    newReferrerName?: string;
-    pendingLead?: WhatsappLeadDraft & { preferredAgentText?: string };
-    /**
-     * Deterministic, timestamped capture of the last lead-like data (image
-     * OCR, contact card, explicit text) seen in THIS admin session. Unlike
-     * WhatsappEntityLedger, this is written from raw inbound text (via
-     * parseLeadCandidate), not from a successful tool result — admin mode
-     * has no equivalent of "THEIR LEADS" to ground a vague "this lead"
-     * reference against, so without a short freshness window the model can
-     * (and did, in production) reach back into old conversation history and
-     * present a day-old image extraction as if it were just sent. Expires
-     * after ADMIN_PENDING_LEAD_TTL_MS — short by design, just long enough to
-     * cover the immediate clarification back-and-forth after one image.
-     */
-    pendingLeadCapture?: {
-      leadName: string;
-      leadMobileNumber: string;
-      area: string;
-      preferredAgentText: string;
-      remark: string;
-      capturedAt: string;
+// Per-referrer step state for the deterministic webchat menu flow
+// (src/lib/agent/webchat-flow.ts). Stored as a JSONB blob per phone, so this
+// discriminated union is free to vary its fields per step — no defaulting
+// needed across unrelated steps.
+export type WebchatMenuState =
+  | { step: "menu" }
+  | { step: "add_phone" }
+  | { step: "add_name"; draft: { leadMobileNumber: string } }
+  | { step: "add_area"; draft: { leadMobileNumber: string; leadName: string } }
+  | {
+      step: "add_agent";
+      draft: { leadMobileNumber: string; leadName: string; area: string };
+      agents: Array<{ id: string; name: string }>;
+    }
+  | {
+      step: "add_confirm";
+      draft: {
+        leadMobileNumber: string;
+        leadName: string;
+        area: string;
+        preferredAgentId: string | null;
+        preferredAgentName: string | null;
+      };
+    }
+  | { step: "edit_pick_lead"; leads: Array<{ referralId: number; label: string }> }
+  | { step: "edit_pick_field"; referralId: number; leadLabel: string }
+  | { step: "edit_value"; referralId: number; leadLabel: string; field: WhatsappUpdateField }
+  | {
+      step: "edit_agent_pick";
+      referralId: number;
+      leadLabel: string;
+      agents: Array<{ id: string; name: string }>;
+    }
+  | {
+      step: "edit_confirm";
+      referralId: number;
+      leadLabel: string;
+      field: WhatsappUpdateField;
+      value: string;
+      valueLabel: string;
     };
-  };
-};
 
 // Minimal lead: only the contact number is strictly required. Name is collected
 // for usefulness; area is optional. Relationship/project type are not asked —
@@ -131,11 +104,7 @@ export type PreferredAgentNotificationProcessResult = WhatsappAgentNotificationR
   status: "sent" | "failed" | "skipped";
 };
 
-export const EMPTY_WHATSAPP_AGENT_STATE: WhatsappAgentState = {
-  mode: "idle",
-  draft: {},
-  nextField: null,
-};
+export const EMPTY_WEBCHAT_MENU_STATE: WebchatMenuState = { step: "menu" };
 
 export type WhatsappReferrerAccount = {
   customerId: string;
@@ -294,31 +263,21 @@ export async function ensureChannelSession() {
   return rows[0];
 }
 
-export async function loadAgentState(senderPhone: string): Promise<WhatsappAgentState> {
+export async function loadAgentState(senderPhone: string): Promise<WebchatMenuState> {
   const session = await ensureChannelSession();
   const metadata = session.metadata || {};
-  const states = metadata.agentStates as Record<string, WhatsappAgentState> | undefined;
+  const states = metadata.agentStates as Record<string, WebchatMenuState> | undefined;
   const canonicalPhone = toCanonicalMalaysiaPhone(senderPhone);
   const state = states?.[canonicalPhone];
 
-  if (!state || !state.mode) {
-    return EMPTY_WHATSAPP_AGENT_STATE;
+  if (!state || !state.step) {
+    return EMPTY_WEBCHAT_MENU_STATE;
   }
 
-  return {
-    mode: state.mode,
-    draft: state.draft || {},
-    nextField: state.nextField || null,
-    update: state.update || {},
-    onboarding: state.onboarding || {},
-    activeLead: state.activeLead,
-    updatedAt: state.updatedAt,
-    lastLeadList: state.lastLeadList || [],
-    entityLedger: state.entityLedger,
-  };
+  return state;
 }
 
-export async function saveAgentState(senderPhone: string, state: WhatsappAgentState) {
+export async function saveAgentState(senderPhone: string, state: WebchatMenuState) {
   const config = getAgentConfig();
   const canonicalPhone = toCanonicalMalaysiaPhone(senderPhone);
 
@@ -340,7 +299,7 @@ export async function saveAgentState(senderPhone: string, state: WhatsappAgentSt
         ),
         updated_at = NOW()
       WHERE tenant_id = $1
-        AND channel_type = 'whatsapp'
+        AND channel_type = '${WEB_CHAT_CHANNEL_TYPE}'
         AND session_identifier = $2
     `,
     [config.tenantId, config.sessionId, canonicalPhone, JSON.stringify(state)],
@@ -396,7 +355,7 @@ export async function appendConversation(senderPhone: string, newTurns: Conversa
         ),
         updated_at = NOW()
       WHERE tenant_id = $1
-        AND channel_type = 'whatsapp'
+        AND channel_type = '${WEB_CHAT_CHANNEL_TYPE}'
         AND session_identifier = $2
     `,
     [config.tenantId, config.sessionId, canonicalPhone, JSON.stringify(combined)],
@@ -420,68 +379,11 @@ export async function clearConversation(senderPhone: string) {
           #- ARRAY['agentStates', $3],
         updated_at = NOW()
       WHERE tenant_id = $1
-        AND channel_type = 'whatsapp'
+        AND channel_type = '${WEB_CHAT_CHANNEL_TYPE}'
         AND session_identifier = $2
     `,
     [config.tenantId, config.sessionId, canonicalPhone],
   );
-}
-
-// ---- Agent debug log (prod observability) ------------------------------------
-// A global ring buffer of recent agent turns, stored in
-// et_channel_sessions.metadata.agentDebugLog. Lets us inspect the agent's
-// reasoning in prod (did the tool fire? did the phantom-guard trip?) via
-// GET /api/whatsapp-agent/logs — no new table, reuses the proven metadata store.
-export type AgentDebugLogEntry = {
-  at: string;
-  phone: string;
-  registered: boolean;
-  inbound: string;
-  reply: string;
-  toolCalls: Array<{ name: string; input: unknown; status: string; agentNotified?: unknown }>;
-  wrote: boolean;
-  guardTrips: number;
-  fallbackUsed: boolean;
-  rounds: number;
-  ms: number;
-};
-
-const MAX_AGENT_DEBUG_ENTRIES = 80;
-
-export async function appendAgentDebugLog(entry: AgentDebugLogEntry) {
-  const config = getAgentConfig();
-  const session = await ensureChannelSession();
-  const metadata = (session.metadata || {}) as Record<string, unknown>;
-  const existing = Array.isArray(metadata.agentDebugLog) ? (metadata.agentDebugLog as AgentDebugLogEntry[]) : [];
-  const combined = [...existing, entry].slice(-MAX_AGENT_DEBUG_ENTRIES);
-
-  await runWhatsappAgentSql(
-    `
-      UPDATE et_channel_sessions
-      SET
-        metadata = jsonb_set(
-          COALESCE(metadata, '{}'::jsonb),
-          ARRAY['agentDebugLog'],
-          $3::jsonb,
-          true
-        ),
-        updated_at = NOW()
-      WHERE tenant_id = $1
-        AND channel_type = 'whatsapp'
-        AND session_identifier = $2
-    `,
-    [config.tenantId, config.sessionId, JSON.stringify(combined)],
-  );
-}
-
-export async function loadAgentDebugLog(limit = 30, phone?: string): Promise<AgentDebugLogEntry[]> {
-  const session = await ensureChannelSession();
-  const metadata = (session.metadata || {}) as Record<string, unknown>;
-  const entries = Array.isArray(metadata.agentDebugLog) ? (metadata.agentDebugLog as AgentDebugLogEntry[]) : [];
-  const filtered = phone
-    ? entries.filter((e) => toCanonicalMalaysiaPhone(e.phone) === toCanonicalMalaysiaPhone(phone))
-    : entries;
-  return filtered.slice(-Math.max(1, Math.min(limit, MAX_AGENT_DEBUG_ENTRIES))).reverse();
 }
 
 export type WhatsappAgentOption = { id: string; name: string };
@@ -1417,90 +1319,6 @@ export async function insertEtMessage(input: {
   );
 }
 
-export type PendingWhatsappInboundMessage = {
-  id: string;
-  externalMessageId: string;
-  messageType: string;
-  textContent: string;
-  mediaUrl: string;
-  senderPhone: string;
-  recipientPhone: string;
-  rawPayload: Record<string, unknown>;
-  createdAt: string;
-};
-
-export async function listUnrepliedWhatsappInboundMessages(limit = 10, lookbackMinutes = 60) {
-  const rows = await runWhatsappAgentSql<{
-    id: string;
-    external_message_id: string | null;
-    message_type: string | null;
-    text_content: string | null;
-    media_url: string | null;
-    sender_phone: string | null;
-    recipient_phone: string | null;
-    raw_payload: Record<string, unknown> | null;
-    created_at: string | null;
-  }>(
-    `
-      SELECT
-        inbound.id::text,
-        inbound.external_message_id,
-        inbound.message_type,
-        inbound.text_content,
-        inbound.media_url,
-        inbound.sender_phone,
-        inbound.recipient_phone,
-        COALESCE(inbound.raw_payload, '{}'::jsonb) AS raw_payload,
-        inbound.created_at::text AS created_at
-      FROM et_messages inbound
-      WHERE inbound.channel = 'whatsapp'
-        AND inbound.direction = 'inbound'
-        AND inbound.sender_phone IS NOT NULL
-        AND BTRIM(inbound.sender_phone) <> ''
-        AND (inbound.recipient_phone IS NULL OR inbound.sender_phone <> inbound.recipient_phone)
-        AND inbound.external_message_id IS NOT NULL
-        AND BTRIM(inbound.external_message_id) <> ''
-        AND inbound.message_type IN ('text', 'conversation', 'extendedTextMessage', 'audio', 'ptt', 'image', 'video', 'document', 'sticker', 'contact', 'contacts', 'contactMessage', 'contactsArrayMessage')
-        AND inbound.created_at >= NOW() - ($2::int * INTERVAL '1 minute')
-        -- Give an image/video row a brief grace period if its media_url isn't
-        -- populated yet (the ingestion service may still be uploading the
-        -- attachment) so the next poll can pick it up once it's ready,
-        -- instead of processing it with no media reference. After 20s a
-        -- still-missing media_url is treated as genuinely stuck and
-        -- processed anyway — prepareWhatsappInboundForAgent then replies
-        -- with an explicit "please resend" instead of leaving the admin
-        -- with no clear signal at all.
-        AND (
-          inbound.message_type NOT IN ('image', 'video')
-          OR inbound.media_url IS NOT NULL
-          OR inbound.created_at < NOW() - INTERVAL '20 seconds'
-        )
-        AND NOT EXISTS (
-          SELECT 1
-          FROM et_messages outbound
-          WHERE outbound.channel = 'whatsapp'
-            AND outbound.direction = 'outbound'
-            AND outbound.external_message_id = 'agent_reply_' || inbound.external_message_id
-        )
-      ORDER BY inbound.created_at ASC NULLS LAST, inbound.id ASC
-      LIMIT $1
-    `,
-    [Math.max(1, Math.min(limit, 50)), Math.max(1, lookbackMinutes)],
-  );
-
-  return rows.map((row) => ({
-    id: row.id,
-    externalMessageId: row.external_message_id || row.id,
-    messageType: row.message_type || "text",
-    textContent: row.text_content || "",
-    mediaUrl: row.media_url || "",
-    senderPhone: row.sender_phone || "",
-    recipientPhone: row.recipient_phone || "",
-    rawPayload: row.raw_payload || {},
-    createdAt: row.created_at || "",
-  }));
-}
-
 export async function hasEtMessage(externalMessageId: string, direction?: "inbound" | "outbound") {
   const rows = await runWhatsappAgentSql<{ id: number }>(
     `
@@ -1516,6 +1334,9 @@ export async function hasEtMessage(externalMessageId: string, direction?: "inbou
   return Boolean(rows[0]);
 }
 
+// Outbound send used by notifyPreferredAgentOfLead to push a WhatsApp message
+// to a sales agent when a lead is assigned to them. Independent of the
+// (removed) referrer-facing WhatsApp chat channel — this is a one-way notify.
 export async function sendWhatsappText(toPhone: string, text: string) {
   const config = getAgentConfig();
   if (!config.baileysBaseUrl) {

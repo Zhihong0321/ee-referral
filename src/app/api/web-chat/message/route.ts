@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import { appendConversation, ensureChannelSession, insertEtMessage } from "@/lib/agent/whatsapp-data";
 import { convertVisualBytesToText } from "@/lib/agent/whatsapp-processor";
-import { runWhatsappAgentTurnV2 } from "@/lib/agent/whatsapp-flow-v2";
+import { runWebchatMenuTurn } from "@/lib/agent/webchat-flow";
 import { toCanonicalMalaysiaPhone } from "@/lib/phone-normalization";
 
 export const runtime = "nodejs";
@@ -125,7 +125,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const { reply } = await runWhatsappAgentTurnV2({ senderPhone: canonicalPhone, text: agentText });
+    const { reply } = await runWebchatMenuTurn({ senderPhone: canonicalPhone, text: agentText });
 
     const now = new Date().toISOString();
     await appendConversation(canonicalPhone, [
