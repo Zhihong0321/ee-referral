@@ -3,6 +3,9 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 
+import { WebChatFormCard, type FormSubmitPayload } from "@/components/web-chat-forms";
+import type { FieldErrors, WebchatForm } from "@/lib/agent/webchat-forms";
+
 const STORAGE_KEY = "ee_webchat_phone";
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const MAX_COMPOSER_HEIGHT = 200;
@@ -200,6 +203,9 @@ export default function WebChat({ detectedStaff }: { detectedStaff: DetectedStaf
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState("");
   const [pendingImage, setPendingImage] = useState<PendingImage | null>(null);
+  // The one form currently on screen, if the assistant opened one. Only the
+  // latest is interactive — earlier ones have already been submitted or left.
+  const [activeForm, setActiveForm] = useState<WebchatForm | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const bottomRef = useRef<HTMLDivElement | null>(null);
@@ -218,7 +224,7 @@ export default function WebChat({ detectedStaff }: { detectedStaff: DetectedStaf
     (async () => {
       try {
         const response = await fetch(`/api/web-chat/history?phone=${encodeURIComponent(savedPhone)}`);
-        const payload = (await response.json()) as { messages?: ChatMessage[]; error?: string };
+        const payload = (await response.json()) as { messages?: ChatMessage[]; form?: WebchatForm; error?: string };
 
         if (!response.ok) {
           window.localStorage.removeItem(STORAGE_KEY);
@@ -228,6 +234,8 @@ export default function WebChat({ detectedStaff }: { detectedStaff: DetectedStaf
 
         setPhone(savedPhone);
         setMessages(payload.messages || []);
+        // A form left open before the reload comes back open.
+        setActiveForm(payload.form || null);
         setPhase("chat");
       } catch {
         window.localStorage.removeItem(STORAGE_KEY);
@@ -235,6 +243,18 @@ export default function WebChat({ detectedStaff }: { detectedStaff: DetectedStaf
       }
     })();
   }, []);
+
+  async function loadHistory(targetPhone: string) {
+    const response = await fetch(`/api/web-chat/history?phone=${encodeURIComponent(targetPhone)}`);
+    const payload = (await response.json()) as { messages?: ChatMessage[]; form?: WebchatForm; error?: string };
+
+    if (!response.ok) {
+      throw new Error(payload.error || "Unable to load conversation history right now.");
+    }
+
+    setMessages(payload.messages || []);
+    setActiveForm(payload.form || null);
+  }
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -268,10 +288,21 @@ export default function WebChat({ detectedStaff }: { detectedStaff: DetectedStaf
       setPhone(payload.phone);
       setLoginDraft("");
       setMessages([]);
+      setActiveForm(null);
       setPhase("chat");
 
       if (payload.isNew) {
         await sendMessage({ text: "Hi", silent: true });
+        return;
+      }
+
+      // A returning number already has a transcript; without this the chat
+      // opens blank and the menu is nowhere to be seen. The login itself has
+      // already succeeded, so a failure here reports itself, not a login error.
+      try {
+        await loadHistory(payload.phone);
+      } catch {
+        setError("Logged in, but your earlier messages could not be loaded.");
       }
     } catch {
       setError("Unable to log in right now.");
@@ -304,7 +335,7 @@ export default function WebChat({ detectedStaff }: { detectedStaff: DetectedStaf
           image: image ? { dataUrl: image.dataUrl } : undefined,
         }),
       });
-      const payload = (await response.json()) as { reply?: string; error?: string };
+      const payload = (await response.json()) as { reply?: string; form?: WebchatForm; error?: string };
 
       if (!response.ok || typeof payload.reply !== "string") {
         setError(payload.error || "Unable to reach the referral assistant right now.");
@@ -312,11 +343,65 @@ export default function WebChat({ detectedStaff }: { detectedStaff: DetectedStaf
       }
 
       setMessages((prev) => [...prev, { role: "assistant", text: payload.reply as string }]);
+      setActiveForm(payload.form || null);
     } catch {
       setError("Unable to reach the referral assistant right now.");
     } finally {
       setBusy(false);
     }
+  }
+
+  /**
+   * Sends a whole form in one request. Returns the server's per-field errors so
+   * the form can show them in place; returns null once the save went through.
+   */
+  async function submitForm(payload: FormSubmitPayload): Promise<FieldErrors | null> {
+    const activePhone = phone || (typeof window !== "undefined" ? window.localStorage.getItem(STORAGE_KEY) : "") || "";
+    if (!activePhone) return null;
+
+    setBusy(true);
+    setError("");
+
+    try {
+      const response = await fetch("/api/web-chat/form", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...payload, phone: activePhone }),
+      });
+      const result = (await response.json()) as {
+        reply?: string;
+        summary?: string;
+        fieldErrors?: FieldErrors;
+        error?: string;
+      };
+
+      if (response.status === 400 && result.fieldErrors) {
+        return result.fieldErrors;
+      }
+
+      if (!response.ok || typeof result.reply !== "string") {
+        setError(result.error || "Unable to save right now.");
+        return null;
+      }
+
+      setMessages((prev) => [
+        ...prev,
+        { role: "user", text: result.summary || "Submitted the form." },
+        { role: "assistant", text: result.reply as string },
+      ]);
+      setActiveForm(null);
+      return null;
+    } catch {
+      setError("Unable to save right now.");
+      return null;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function cancelForm() {
+    setActiveForm(null);
+    void sendMessage({ text: "menu", silent: true });
   }
 
   function submitChatMessage() {
@@ -362,6 +447,7 @@ export default function WebChat({ detectedStaff }: { detectedStaff: DetectedStaf
     setMessages([]);
     setLoginDraft("");
     setPendingImage(null);
+    setActiveForm(null);
     setError("");
     setPhase("login");
   }
@@ -388,6 +474,7 @@ export default function WebChat({ detectedStaff }: { detectedStaff: DetectedStaf
 
       setMessages([]);
       setPendingImage(null);
+      setActiveForm(null);
     } catch {
       setError("Unable to reset the chat right now.");
     } finally {
@@ -425,6 +512,11 @@ export default function WebChat({ detectedStaff }: { detectedStaff: DetectedStaf
             <h1 className="text-2xl font-semibold text-slate-800 sm:text-3xl">Referral Assistant</h1>
             <p className="mt-3 text-base leading-6 text-slate-500">
               What&apos;s your phone number? I&apos;ll use it to pull up your referral account.
+            </p>
+            <p className="mt-2 text-sm font-medium leading-5 text-red-600">
+              Please enter the Referrer&apos;s Phone Number
+              <br />
+              请用介绍人的号码登录
             </p>
           </div>
 
@@ -508,7 +600,7 @@ export default function WebChat({ detectedStaff }: { detectedStaff: DetectedStaf
 
       <div className="flex-1 overflow-y-auto overscroll-contain">
         <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col px-4 py-6 sm:px-6">
-          {messages.length === 0 ? (
+          {messages.length === 0 && !activeForm ? (
             <div className="flex flex-1 flex-col items-center justify-center text-center">
               <p className="text-lg font-medium text-slate-600">Say hi to get started</p>
             </div>
@@ -535,7 +627,10 @@ export default function WebChat({ detectedStaff }: { detectedStaff: DetectedStaf
                   </div>
                 ),
               )}
-              {busy ? <TypingIndicator /> : null}
+              {busy && !activeForm ? <TypingIndicator /> : null}
+              {activeForm ? (
+                <WebChatFormCard form={activeForm} busy={busy} onCancel={cancelForm} onSubmit={submitForm} />
+              ) : null}
             </div>
           )}
           <div ref={bottomRef} />

@@ -4,10 +4,6 @@ import test from "node:test";
 import {
   EDIT_FIELD_OPTIONS,
   GLOBAL_RESET_COMMANDS,
-  buildAddConfirm,
-  handleAddAgent,
-  handleAddName,
-  handleAddPhone,
   handleEditAgentPick,
   handleEditPickLead,
   handleEditValue,
@@ -26,13 +22,16 @@ function canonicalizeStub(value: string) {
   return digits;
 }
 
-test("parseMenuSelection maps digits and keywords to the three menu actions", () => {
+test("parseMenuSelection maps digits and keywords to the four menu actions", () => {
   assert.equal(parseMenuSelection("1"), "add");
   assert.equal(parseMenuSelection("add lead"), "add");
   assert.equal(parseMenuSelection("2"), "edit");
   assert.equal(parseMenuSelection("edit"), "edit");
   assert.equal(parseMenuSelection("3"), "check");
   assert.equal(parseMenuSelection("check leads"), "check");
+  assert.equal(parseMenuSelection("4"), "profile");
+  assert.equal(parseMenuSelection("my details"), "profile");
+  assert.equal(parseMenuSelection("profile"), "profile");
   assert.equal(parseMenuSelection("hi"), null);
   assert.equal(parseMenuSelection(""), null);
 });
@@ -70,73 +69,6 @@ test("GLOBAL_RESET_COMMANDS covers menu/cancel/0 and nothing else", () => {
   assert.equal(GLOBAL_RESET_COMMANDS.has("cancel"), true);
   assert.equal(GLOBAL_RESET_COMMANDS.has("0"), true);
   assert.equal(GLOBAL_RESET_COMMANDS.has("hi"), false);
-});
-
-test("handleAddPhone rejects an invalid number and stays on add_phone", () => {
-  const result = handleAddPhone("123", canonicalizeStub);
-  assert.equal(result.nextState.step, "add_phone");
-  assert.match(result.reply, /doesn't look like a valid phone number/);
-});
-
-test("handleAddPhone accepts a valid number and advances to add_name with the canonical value", () => {
-  const result = handleAddPhone("012-3456789", canonicalizeStub);
-  assert.equal(result.nextState.step, "add_name");
-  assert.equal((result.nextState as { draft: { leadMobileNumber: string } }).draft.leadMobileNumber, "60123456789");
-});
-
-test("handleAddName treats 'skip' as an empty name and always advances to add_area", () => {
-  const skipped = handleAddName({ step: "add_name", draft: { leadMobileNumber: "60123456789" } }, "skip", "skip");
-  assert.equal(skipped.nextState.step, "add_area");
-  assert.equal((skipped.nextState as { draft: { leadName: string } }).draft.leadName, "");
-
-  const named = handleAddName({ step: "add_name", draft: { leadMobileNumber: "60123456789" } }, "Ali Bin Ahmad", "ali bin ahmad");
-  assert.equal((named.nextState as { draft: { leadName: string } }).draft.leadName, "Ali Bin Ahmad");
-});
-
-test("handleAddAgent: skip clears the preferred agent and goes straight to confirm", () => {
-  const state = {
-    step: "add_agent" as const,
-    draft: { leadMobileNumber: "60123456789", leadName: "Ali", area: "Penang" },
-    agents: [{ id: "a1", name: "Agent One" }],
-  };
-  const result = handleAddAgent(state, "skip", "skip");
-  assert.equal(result.nextState.step, "add_confirm");
-  assert.equal((result.nextState as { draft: { preferredAgentId: string | null } }).draft.preferredAgentId, null);
-});
-
-test("handleAddAgent: an out-of-range number re-prompts without losing the agent list", () => {
-  const state = {
-    step: "add_agent" as const,
-    draft: { leadMobileNumber: "60123456789", leadName: "Ali", area: "Penang" },
-    agents: [{ id: "a1", name: "Agent One" }],
-  };
-  const result = handleAddAgent(state, "9", "9");
-  assert.equal(result.nextState.step, "add_agent");
-  assert.deepEqual((result.nextState as typeof state).agents, state.agents);
-});
-
-test("handleAddAgent: a valid pick carries the agent id/name into confirm", () => {
-  const state = {
-    step: "add_agent" as const,
-    draft: { leadMobileNumber: "60123456789", leadName: "Ali", area: "Penang" },
-    agents: [{ id: "a1", name: "Agent One" }, { id: "a2", name: "Agent Two" }],
-  };
-  const result = handleAddAgent(state, "2", "2");
-  assert.equal(result.nextState.step, "add_confirm");
-  assert.equal((result.nextState as { draft: { preferredAgentId: string | null } }).draft.preferredAgentId, "a2");
-});
-
-test("buildAddConfirm renders every collected field, defaulting missing ones to (none)", () => {
-  const result = buildAddConfirm({
-    leadMobileNumber: "60123456789",
-    leadName: "",
-    area: "",
-    preferredAgentId: null,
-    preferredAgentName: null,
-  });
-  assert.match(result.reply, /Name: \(none\)/);
-  assert.match(result.reply, /Area: \(none\)/);
-  assert.match(result.reply, /Preferred agent: \(none\)/);
 });
 
 test("handleEditPickLead rejects an out-of-range pick and keeps the same lead list", () => {

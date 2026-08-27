@@ -7,9 +7,16 @@
  * resolve the "@/" path alias, so any runtime dependency would break
  * `npm test`. Mirrors the same rule already enforced in whatsapp-history.ts.
  */
+import type { WebchatForm } from "@/lib/agent/webchat-forms";
 import type { WebchatMenuState, WhatsappUpdateField } from "@/lib/agent/whatsapp-data";
 
-export const MENU_TEXT = ["What would you like to do?", "1. Add Lead", "2. Edit Lead", "3. Check Lead"].join("\n");
+export const MENU_TEXT = [
+  "What would you like to do?",
+  "1. Add Lead",
+  "2. Edit Lead",
+  "3. Check Lead",
+  "4. My Details",
+].join("\n");
 
 export const GLOBAL_RESET_COMMANDS = new Set(["menu", "cancel", "0"]);
 
@@ -43,10 +50,11 @@ export function parseNumber(trimmed: string): number | null {
   return Number.isFinite(value) ? value : null;
 }
 
-export function parseMenuSelection(normalized: string): "add" | "edit" | "check" | null {
+export function parseMenuSelection(normalized: string): "add" | "edit" | "check" | "profile" | null {
   if (normalized === "1" || normalized.startsWith("add")) return "add";
   if (normalized === "2" || normalized.startsWith("edit")) return "edit";
   if (normalized === "3" || normalized.startsWith("check")) return "check";
+  if (normalized === "4" || normalized.startsWith("my detail") || normalized.startsWith("profile")) return "profile";
   return null;
 }
 
@@ -54,69 +62,10 @@ export function formatAgentList(agents: Array<{ id: string; name: string }>) {
   return agents.map((agent, idx) => `  ${idx + 1}. ${agent.name}`).join("\n");
 }
 
-export type StepResult = { reply: string; nextState: WebchatMenuState };
-
-export function handleAddPhone(trimmed: string, canonicalize: (value: string) => string): StepResult {
-  const canonical = canonicalize(trimmed);
-
-  if (!isPlausibleMalaysiaMobile(canonical)) {
-    return {
-      reply: "That doesn't look like a valid phone number. Please enter it again (e.g. 012-3456789).",
-      nextState: { step: "add_phone" },
-    };
-  }
-
-  return {
-    reply: "Got it. What's the lead's name? (Type 'skip' if you don't have it.)",
-    nextState: { step: "add_name", draft: { leadMobileNumber: canonical } },
-  };
-}
-
-export function handleAddName(state: Extract<WebchatMenuState, { step: "add_name" }>, trimmed: string, normalized: string): StepResult {
-  const leadName = isSkip(normalized) ? "" : trimmed.slice(0, 200);
-
-  return {
-    reply: "Which area or state is the lead from? (Type 'skip' to leave blank.)",
-    nextState: { step: "add_area", draft: { ...state.draft, leadName } },
-  };
-}
-
-export function buildAddConfirm(draft: {
-  leadMobileNumber: string;
-  leadName: string;
-  area: string;
-  preferredAgentId: string | null;
-  preferredAgentName: string | null;
-}): StepResult {
-  const summary = [
-    `Phone: ${draft.leadMobileNumber}`,
-    `Name: ${draft.leadName || "(none)"}`,
-    `Area: ${draft.area || "(none)"}`,
-    `Preferred agent: ${draft.preferredAgentName || "(none)"}`,
-  ].join("\n");
-
-  return {
-    reply: `Please confirm this new lead:\n${summary}\n\nReply 'yes' to save, or 'cancel' to discard.`,
-    nextState: { step: "add_confirm", draft },
-  };
-}
-
-export function handleAddAgent(state: Extract<WebchatMenuState, { step: "add_agent" }>, trimmed: string, normalized: string): StepResult {
-  if (isSkip(normalized)) {
-    return buildAddConfirm({ ...state.draft, preferredAgentId: null, preferredAgentName: null });
-  }
-
-  const n = parseNumber(trimmed);
-  if (!n || n < 1 || n > state.agents.length) {
-    return {
-      reply: `Please reply with a number between 1 and ${state.agents.length}, or type 'skip'.\n${formatAgentList(state.agents)}`,
-      nextState: state,
-    };
-  }
-
-  const agent = state.agents[n - 1];
-  return buildAddConfirm({ ...state.draft, preferredAgentId: agent.id, preferredAgentName: agent.name });
-}
+// `form` asks the browser to render one of the webchat forms below the reply.
+// It is transient: the form is re-emitted on every turn the flow stays on that
+// step, so a page reload never leaves the user staring at a form-less prompt.
+export type StepResult = { reply: string; nextState: WebchatMenuState; form?: WebchatForm };
 
 export function handleEditPickLead(state: Extract<WebchatMenuState, { step: "edit_pick_lead" }>, trimmed: string): StepResult {
   const n = parseNumber(trimmed);

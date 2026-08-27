@@ -155,7 +155,7 @@ export function formatLeadStateLines(leads: LeadStateLike[], cap = 20): string[]
   });
 
   if (leads.length > cap) {
-    lines.push(`  ...and ${leads.length - cap} more (use get_my_leads to see all).`);
+    lines.push(`  ...and ${leads.length - cap} more.`);
   }
 
   return lines;

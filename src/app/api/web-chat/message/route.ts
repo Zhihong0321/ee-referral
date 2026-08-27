@@ -1,57 +1,15 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-import { appendConversation, ensureChannelSession, insertEtMessage } from "@/lib/agent/whatsapp-data";
+import { appendConversation } from "@/lib/agent/whatsapp-data";
 import { convertVisualBytesToText } from "@/lib/agent/whatsapp-processor";
 import { runWebchatMenuTurn } from "@/lib/agent/webchat-flow";
+import { logWebchatExchange } from "@/lib/agent/webchat-transcript";
 import { toCanonicalMalaysiaPhone } from "@/lib/phone-normalization";
 
 export const runtime = "nodejs";
 
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
-
-// Webchat has no real WhatsApp business number to log as the bot's phone,
-// so et_messages uses this fixed placeholder as the "other side" of the pair.
-const WEBCHAT_BOT_PHONE = "webchat-assistant";
-
-async function logWebchatMessages(params: {
-  canonicalPhone: string;
-  inboundText: string;
-  inboundMessageType: string;
-  reply: string;
-}) {
-  try {
-    const channelSession = await ensureChannelSession();
-    const idSuffix = `${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
-
-    await insertEtMessage({
-      channel: "webchat",
-      externalMessageId: `webchat_in_${idSuffix}`,
-      direction: "inbound",
-      messageType: params.inboundMessageType,
-      textContent: params.inboundText,
-      rawPayload: { source: "web_chat" },
-      senderPhone: params.canonicalPhone,
-      recipientPhone: WEBCHAT_BOT_PHONE,
-      channelSessionId: channelSession.id,
-    });
-
-    await insertEtMessage({
-      channel: "webchat",
-      externalMessageId: `webchat_out_${idSuffix}`,
-      direction: "outbound",
-      messageType: "text",
-      textContent: params.reply,
-      rawPayload: { source: "web_chat_agent_reply" },
-      senderPhone: WEBCHAT_BOT_PHONE,
-      recipientPhone: params.canonicalPhone,
-      channelSessionId: channelSession.id,
-    });
-  } catch (error) {
-    // Logging to et_messages must never break the user-facing chat reply.
-    console.error("[web-chat] failed to log message to et_messages:", error instanceof Error ? error.message : error);
-  }
-}
 
 const requestSchema = z
   .object({
@@ -96,7 +54,10 @@ export async function POST(request: Request) {
   }
 
   const caption = body.data.message;
-  let agentText = caption;
+  // The flow is a deterministic menu with no model behind it, so an image is
+  // only ever transcribed for the record — its text must not be fed to the step
+  // parser, which would read it as an answer to whatever question is open.
+  let transcript = caption;
   let displayText = caption;
 
   if (body.data.image) {
@@ -113,34 +74,33 @@ export async function POST(request: Request) {
         messageType: "image",
         caption,
       });
-      agentText = `[System: User sent an image. Extracted content:]\n${converted}`;
+      transcript = `[System: User sent an image. Extracted content:]\n${converted}`;
     } catch (error) {
       const reason = error instanceof Error ? error.message : "unknown error";
-      agentText =
-        `[System: User sent an image. Conversion failed: ${reason}.]\n` +
-        (caption ? `Caption: ${caption}\n` : "") +
-        "Instruct the AI Agent to reply exactly with: '( Image failed to read ), can you write in text?'";
+      transcript = `[System: User sent an image. Conversion failed: ${reason}.]\n${caption ? `Caption: ${caption}\n` : ""}`;
     }
     displayText = caption ? `(sent an image) ${caption}` : "(sent an image)";
   }
 
   try {
-    const { reply } = await runWebchatMenuTurn({ senderPhone: canonicalPhone, text: agentText });
+    // Only the typed caption drives the flow; an image alone leaves the step
+    // untouched and just re-states the current prompt.
+    const { reply, form } = await runWebchatMenuTurn({ senderPhone: canonicalPhone, text: caption });
 
     const now = new Date().toISOString();
     await appendConversation(canonicalPhone, [
-      { role: "user", text: agentText, time: now },
+      { role: "user", text: transcript, time: now },
       { role: "assistant", text: reply, time: now },
     ]);
 
-    await logWebchatMessages({
+    await logWebchatExchange({
       canonicalPhone,
-      inboundText: agentText,
+      inboundText: transcript,
       inboundMessageType: body.data.image ? "image" : "text",
       reply,
     });
 
-    return NextResponse.json({ reply, displayText });
+    return NextResponse.json({ reply, displayText, form });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error.";
     return NextResponse.json({ error: `Unable to reach the referral assistant right now: ${message}` }, { status: 500 });

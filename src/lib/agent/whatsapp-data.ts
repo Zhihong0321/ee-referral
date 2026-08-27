@@ -8,7 +8,9 @@ const WEB_CHAT_SESSION_ID = "referral-assistant-web";
 const WEB_CHAT_CHANNEL_TYPE = "webchat";
 const REFERRAL_MARKER = "REFERRAL_ACCOUNT";
 const LEGACY_REFERRER_MARKER = "REFERRER_ACCOUNT";
-const REFERRAL_ACCOUNT_NAME = "Referral";
+// Placeholder name given to a referral account before the referrer tells us
+// their real one. Exported so callers can tell "no name yet" from "has a name".
+export const REFERRAL_ACCOUNT_NAME = "Referral";
 const APP_ACTOR = "whatsapp_agent";
 
 // Normalizes customer.phone (DB side) to the "national significant number" —
@@ -35,24 +37,12 @@ const PHONE_MATCH_KEY_SQL = `(CASE
 // needed across unrelated steps.
 export type WebchatMenuState =
   | { step: "menu" }
-  | { step: "add_phone" }
-  | { step: "add_name"; draft: { leadMobileNumber: string } }
-  | { step: "add_area"; draft: { leadMobileNumber: string; leadName: string } }
-  | {
-      step: "add_agent";
-      draft: { leadMobileNumber: string; leadName: string; area: string };
-      agents: Array<{ id: string; name: string }>;
-    }
-  | {
-      step: "add_confirm";
-      draft: {
-        leadMobileNumber: string;
-        leadName: string;
-        area: string;
-        preferredAgentId: string | null;
-        preferredAgentName: string | null;
-      };
-    }
+  // "Add Lead" is a single form rendered in the chat, not a question-per-turn
+  // conversation. This step only means "the add-lead form is on screen"; the
+  // draft lives in the browser until the whole form is submitted at once.
+  | { step: "add_form" }
+  // "4. My Details" — the referrer's own name/bank/IC form, same one-shot idea.
+  | { step: "profile_form" }
   | { step: "edit_pick_lead"; leads: Array<{ referralId: number; label: string }> }
   | { step: "edit_pick_field"; referralId: number; leadLabel: string }
   | { step: "edit_value"; referralId: number; leadLabel: string; field: WhatsappUpdateField }
@@ -111,6 +101,7 @@ export type WhatsappReferrerAccount = {
   name: string;
   phone: string;
   bankAccount: string;
+  icNumber: string;
   // true once the referrer has a real name AND a payout bank account on file.
   registered: boolean;
 };
@@ -710,6 +701,7 @@ export async function resolveOrCreateReferrerByWhatsappPhone(senderPhone: string
 function buildReferrerAccount(row: ReferrerRow, fallbackPhone: string): WhatsappReferrerAccount {
   const notes = parseNotes(row.notes);
   const bankAccount = typeof notes.bankAccount === "string" ? notes.bankAccount.trim() : "";
+  const icNumber = typeof notes.icNumber === "string" ? notes.icNumber.trim() : "";
   const trimmedName = row.name?.trim() || "";
   const hasRealName = Boolean(trimmedName) && !row.is_generic_name;
 
@@ -718,6 +710,7 @@ function buildReferrerAccount(row: ReferrerRow, fallbackPhone: string): Whatsapp
     name: trimmedName || REFERRAL_ACCOUNT_NAME,
     phone: row.phone?.trim() || fallbackPhone,
     bankAccount,
+    icNumber,
     registered: hasRealName && Boolean(bankAccount),
   };
 }
@@ -727,7 +720,7 @@ function buildReferrerAccount(row: ReferrerRow, fallbackPhone: string): Whatsapp
 // customer.name, bank details merged into customer.notes JSON.
 export async function saveReferrerProfile(
   referrer: WhatsappReferrerAccount,
-  input: { name: string; bankAccount: string; bankerName?: string },
+  input: { name: string; bankAccount: string; bankerName?: string; icNumber?: string },
 ) {
   const existingRows = await runWhatsappAgentSql<{ notes: string | null }>(
     `SELECT notes FROM customer WHERE customer_id = $1 LIMIT 1`,
@@ -738,6 +731,10 @@ export async function saveReferrerProfile(
     kind: "referral_account",
     bankAccount: input.bankAccount,
     bankerName: input.bankerName?.trim() || input.name,
+    // The REFERRER's own IC, not a lead's — this row is the referral account
+    // (customer.remark = REFERRAL_MARKER), not a customer profile. The table has
+    // no IC column, so it sits beside the referrer's bank details in notes JSON.
+    ...(input.icNumber === undefined ? {} : { icNumber: input.icNumber.trim() }),
     updatedAt: new Date().toISOString(),
   };
 
@@ -758,6 +755,7 @@ export async function saveReferrerProfile(
     ...referrer,
     name: input.name,
     bankAccount: input.bankAccount,
+    icNumber: input.icNumber?.trim() ?? referrer.icNumber,
     registered: true,
   };
 }

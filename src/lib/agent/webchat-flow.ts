@@ -6,12 +6,16 @@
  * lives in webchat-flow-logic.ts, testable without a database), and every
  * write goes through the same validated functions the old agent used
  * (whatsapp-data.ts). Per-referrer step state is persisted via
- * loadAgentState/saveAgentState so a multi-turn flow (e.g. Add Lead) survives
- * across separate HTTP requests.
+ * loadAgentState/saveAgentState so a multi-turn flow survives across separate
+ * HTTP requests.
+ *
+ * Adding a lead and updating your own details are NOT multi-turn here: each is
+ * a single form the browser renders and submits in one shot to
+ * /api/web-chat/form. This module only opens those forms; the route saves them.
  */
 import {
   EMPTY_WEBCHAT_MENU_STATE,
-  createWhatsappReferral,
+  REFERRAL_ACCOUNT_NAME,
   listWhatsappAgents,
   listWhatsappReferralsByReferrerPhone,
   loadAgentState,
@@ -20,17 +24,14 @@ import {
   updateWhatsappReferral,
   type WebchatMenuState,
 } from "@/lib/agent/whatsapp-data";
+import type { WebchatForm } from "@/lib/agent/webchat-forms";
 import { formatLeadStateLines } from "@/lib/agent/whatsapp-history";
 import { toCanonicalMalaysiaPhone } from "@/lib/phone-normalization";
 import {
   EDIT_FIELD_OPTIONS,
   GLOBAL_RESET_COMMANDS,
   MENU_TEXT,
-  buildAddConfirm,
   formatAgentList,
-  handleAddAgent,
-  handleAddName,
-  handleAddPhone,
   handleEditAgentPick,
   handleEditPickLead,
   handleEditValue,
@@ -40,6 +41,53 @@ import {
   parseNumber,
   type StepResult,
 } from "@/lib/agent/webchat-flow-logic";
+
+/**
+ * Builds the "Add Lead" form. Field 2 (the referrer) is filled from the phone
+ * the caller logged in with — it is displayed, never typed.
+ */
+export async function buildAddLeadForm(canonicalPhone: string): Promise<StepResult> {
+  const [referrer, agents] = await Promise.all([
+    resolveOrCreateReferrerByWhatsappPhone(canonicalPhone),
+    listWhatsappAgents(),
+  ]);
+
+  const form: WebchatForm = {
+    kind: "add_lead",
+    referrer: { name: referrer.name, phone: referrer.phone || canonicalPhone },
+    agents,
+  };
+
+  return {
+    reply: "Fill in the lead's details below and tap Submit.",
+    nextState: { step: "add_form" },
+    form,
+  };
+}
+
+export async function buildProfileForm(canonicalPhone: string): Promise<StepResult> {
+  const referrer = await resolveOrCreateReferrerByWhatsappPhone(canonicalPhone);
+
+  const form: WebchatForm = {
+    kind: "profile",
+    phone: referrer.phone || canonicalPhone,
+    values: {
+      // A referrer with no name yet carries the generic placeholder account
+      // name; show it as blank so they type their real name instead of editing
+      // boilerplate. Anyone who already has a real name keeps it prefilled,
+      // whether or not their bank details are on file yet.
+      name: referrer.name === REFERRAL_ACCOUNT_NAME ? "" : referrer.name,
+      bankAccount: referrer.bankAccount,
+      icNumber: referrer.icNumber,
+    },
+  };
+
+  return {
+    reply: "Update your referrer details below and tap Save.",
+    nextState: { step: "profile_form" },
+    form,
+  };
+}
 
 async function handleCheckLead(canonicalPhone: string): Promise<StepResult> {
   const leads = await listWhatsappReferralsByReferrerPhone(canonicalPhone);
@@ -67,11 +115,11 @@ async function beginEditLead(canonicalPhone: string): Promise<StepResult> {
   };
 }
 
-async function handleMenuStep(trimmed: string, normalized: string, canonicalPhone: string): Promise<StepResult> {
+async function handleMenuStep(normalized: string, canonicalPhone: string): Promise<StepResult> {
   const selection = parseMenuSelection(normalized);
 
   if (selection === "add") {
-    return { reply: "Let's add a new lead. What's the lead's phone number?", nextState: { step: "add_phone" } };
+    return buildAddLeadForm(canonicalPhone);
   }
 
   if (selection === "edit") {
@@ -82,49 +130,31 @@ async function handleMenuStep(trimmed: string, normalized: string, canonicalPhon
     return handleCheckLead(canonicalPhone);
   }
 
+  if (selection === "profile") {
+    return buildProfileForm(canonicalPhone);
+  }
+
   return { reply: MENU_TEXT, nextState: EMPTY_WEBCHAT_MENU_STATE };
 }
 
-async function handleAddArea(state: Extract<WebchatMenuState, { step: "add_area" }>, trimmed: string, normalized: string): Promise<StepResult> {
-  const isSkipArea = normalized === "skip" || normalized === "";
-  const area = isSkipArea ? "" : trimmed.slice(0, 200);
-  const draft = { ...state.draft, area };
-  const agents = await listWhatsappAgents();
-
-  if (agents.length === 0) {
-    return buildAddConfirm({ ...draft, preferredAgentId: null, preferredAgentName: null });
-  }
-
-  return {
-    reply: `Who's the preferred agent for this lead? (Reply with a number, or type 'skip'.)\n${formatAgentList(agents)}`,
-    nextState: { step: "add_agent", draft, agents },
-  };
-}
-
-async function handleAddConfirm(
-  state: Extract<WebchatMenuState, { step: "add_confirm" }>,
-  senderPhone: string,
+/**
+ * While a form is on screen, typing is not how you fill it in. A different menu
+ * choice still switches away; anything else re-sends the same form so a reload
+ * or a stray message cannot strand the user.
+ */
+async function handleFormStep(
+  step: "add_form" | "profile_form",
   normalized: string,
+  canonicalPhone: string,
 ): Promise<StepResult> {
-  if (isNo(normalized)) {
-    return { reply: `Discarded.\n\n${MENU_TEXT}`, nextState: EMPTY_WEBCHAT_MENU_STATE };
+  const selection = parseMenuSelection(normalized);
+
+  if (selection) {
+    return handleMenuStep(normalized, canonicalPhone);
   }
 
-  if (!isYes(normalized)) {
-    return { reply: "Reply 'yes' to save this lead, or 'cancel' to discard.", nextState: state };
-  }
-
-  const referrer = await resolveOrCreateReferrerByWhatsappPhone(senderPhone);
-  const { referralId } = await createWhatsappReferral(
-    referrer,
-    { leadName: state.draft.leadName, leadMobileNumber: state.draft.leadMobileNumber, area: state.draft.area },
-    { preferredAgentId: state.draft.preferredAgentId },
-  );
-
-  return {
-    reply: `Lead saved (#${referralId}).\n\n${MENU_TEXT}`,
-    nextState: EMPTY_WEBCHAT_MENU_STATE,
-  };
+  const reopened = step === "add_form" ? await buildAddLeadForm(canonicalPhone) : await buildProfileForm(canonicalPhone);
+  return { ...reopened, reply: `${reopened.reply}\n\n(Type 'menu' to go back.)` };
 }
 
 async function handleEditPickField(
@@ -187,17 +217,10 @@ async function dispatch(
 ): Promise<StepResult> {
   switch (state.step) {
     case "menu":
-      return handleMenuStep(trimmed, normalized, canonicalPhone);
-    case "add_phone":
-      return handleAddPhone(trimmed, toCanonicalMalaysiaPhone);
-    case "add_name":
-      return handleAddName(state, trimmed, normalized);
-    case "add_area":
-      return handleAddArea(state, trimmed, normalized);
-    case "add_agent":
-      return handleAddAgent(state, trimmed, normalized);
-    case "add_confirm":
-      return handleAddConfirm(state, senderPhone, normalized);
+      return handleMenuStep(normalized, canonicalPhone);
+    case "add_form":
+    case "profile_form":
+      return handleFormStep(state.step, normalized, canonicalPhone);
     case "edit_pick_lead":
       return handleEditPickLead(state, trimmed);
     case "edit_pick_field":
@@ -209,11 +232,16 @@ async function dispatch(
     case "edit_confirm":
       return handleEditConfirm(state, senderPhone, normalized);
     default:
+      // Also the landing spot for states persisted by an older build of the
+      // flow (the retired step-by-step "Add Lead" questions).
       return { reply: MENU_TEXT, nextState: EMPTY_WEBCHAT_MENU_STATE };
   }
 }
 
-export async function runWebchatMenuTurn(params: { senderPhone: string; text: string }): Promise<{ reply: string }> {
+export async function runWebchatMenuTurn(params: {
+  senderPhone: string;
+  text: string;
+}): Promise<{ reply: string; form?: WebchatForm }> {
   const canonicalPhone = toCanonicalMalaysiaPhone(params.senderPhone);
   const trimmed = (params.text || "").trim();
   const normalized = trimmed.toLowerCase();
@@ -224,8 +252,8 @@ export async function runWebchatMenuTurn(params: { senderPhone: string; text: st
   }
 
   const state = await loadAgentState(canonicalPhone);
-  const { reply, nextState } = await dispatch(state, params.senderPhone, canonicalPhone, trimmed, normalized);
+  const { reply, nextState, form } = await dispatch(state, params.senderPhone, canonicalPhone, trimmed, normalized);
   await saveAgentState(canonicalPhone, nextState);
 
-  return { reply };
+  return { reply, form };
 }
