@@ -41,7 +41,8 @@ export type WebchatMenuState =
   // conversation. This step only means "the add-lead form is on screen"; the
   // draft lives in the browser until the whole form is submitted at once.
   | { step: "add_form" }
-  // "4. My Details" — the referrer's own name/bank/IC form, same one-shot idea.
+  // "4. My Details" — the referrer's payout profile (name, IC, TIN, MyKad
+  // address, bank, and account number), same one-shot idea.
   | { step: "profile_form" }
   | { step: "edit_pick_lead"; leads: Array<{ referralId: number; label: string }> }
   | { step: "edit_pick_field"; referralId: number; leadLabel: string }
@@ -100,9 +101,13 @@ export type WhatsappReferrerAccount = {
   customerId: string;
   name: string;
   phone: string;
+  bankName: string;
   bankAccount: string;
   icNumber: string;
-  // true once the referrer has a real name AND a payout bank account on file.
+  tin: string;
+  mykadAddress: string;
+  // true once the referrer has a real name and the payout details on file:
+  // bank, account number, TIN, and MyKad address.
   registered: boolean;
 };
 
@@ -698,43 +703,71 @@ export async function resolveOrCreateReferrerByWhatsappPhone(senderPhone: string
   return buildReferrerAccount(inserted[0], canonicalPhone);
 }
 
+function noteText(notes: Record<string, unknown>, key: string) {
+  const value = notes[key];
+  return typeof value === "string" ? value.trim() : "";
+}
+
 function buildReferrerAccount(row: ReferrerRow, fallbackPhone: string): WhatsappReferrerAccount {
   const notes = parseNotes(row.notes);
-  const bankAccount = typeof notes.bankAccount === "string" ? notes.bankAccount.trim() : "";
-  const icNumber = typeof notes.icNumber === "string" ? notes.icNumber.trim() : "";
+  const bankAccount = noteText(notes, "bankAccount");
+  const icNumber = noteText(notes, "icNumber");
+  const tin = noteText(notes, "tin");
+  const mykadAddress = noteText(notes, "mykadAddress");
   const trimmedName = row.name?.trim() || "";
   const hasRealName = Boolean(trimmedName) && !row.is_generic_name;
+  const storedBankerName = noteText(notes, "bankerName");
+  // Older saves copied the referrer's own name into bankerName, because the
+  // form never asked which bank the account belongs to. That copy is not a bank.
+  const bankName =
+    storedBankerName && storedBankerName.toLowerCase() !== trimmedName.toLowerCase() ? storedBankerName : "";
 
   return {
     customerId: row.customer_id,
     name: trimmedName || REFERRAL_ACCOUNT_NAME,
     phone: row.phone?.trim() || fallbackPhone,
+    bankName,
     bankAccount,
     icNumber,
-    registered: hasRealName && Boolean(bankAccount),
+    tin,
+    mykadAddress,
+    registered: hasRealName && Boolean(bankAccount) && Boolean(bankName) && Boolean(tin) && Boolean(mykadAddress),
   };
 }
 
-// Persist a referrer's name + payout bank account (collected during WhatsApp
-// onboarding). Matches how the dashboard portal stores the profile: name in
-// customer.name, bank details merged into customer.notes JSON.
+// Persist a referrer's payout profile. Matches how the dashboard portal stores
+// it: name in customer.name, bank and tax details merged into customer.notes JSON.
 export async function saveReferrerProfile(
   referrer: WhatsappReferrerAccount,
-  input: { name: string; bankAccount: string; bankerName?: string; icNumber?: string },
+  input: {
+    name: string;
+    bankAccount: string;
+    bankerName?: string;
+    icNumber?: string;
+    tin?: string;
+    mykadAddress?: string;
+  },
 ) {
   const existingRows = await runWhatsappAgentSql<{ notes: string | null }>(
     `SELECT notes FROM customer WHERE customer_id = $1 LIMIT 1`,
     [referrer.customerId],
   );
+  const existingNotes = parseNotes(existingRows[0]?.notes ?? null);
+  const bankerName =
+    input.bankerName !== undefined
+      ? input.bankerName.trim()
+      : noteText(existingNotes, "bankerName") || input.name;
   const mergedNotes = {
-    ...parseNotes(existingRows[0]?.notes ?? null),
+    ...existingNotes,
     kind: "referral_account",
     bankAccount: input.bankAccount,
-    bankerName: input.bankerName?.trim() || input.name,
-    // The REFERRER's own IC, not a lead's — this row is the referral account
-    // (customer.remark = REFERRAL_MARKER), not a customer profile. The table has
-    // no IC column, so it sits beside the referrer's bank details in notes JSON.
+    bankerName,
+    // The REFERRER's own IC, TIN, and MyKad address — this row is the referral
+    // account (customer.remark = REFERRAL_MARKER), not a customer profile. The
+    // table has no columns for them, so they sit beside the bank details.
     ...(input.icNumber === undefined ? {} : { icNumber: input.icNumber.trim() }),
+    ...(input.tin === undefined ? {} : { tin: input.tin.trim() }),
+    ...(input.mykadAddress === undefined ? {} : { mykadAddress: input.mykadAddress.trim() }),
     updatedAt: new Date().toISOString(),
   };
 
@@ -751,12 +784,20 @@ export async function saveReferrerProfile(
     [input.name, JSON.stringify(mergedNotes), REFERRAL_MARKER, APP_ACTOR, referrer.customerId],
   );
 
+  const savedTin = input.tin?.trim() ?? referrer.tin;
+  const savedAddress = input.mykadAddress?.trim() ?? referrer.mykadAddress;
+  const savedBankName =
+    bankerName && bankerName.toLowerCase() !== input.name.trim().toLowerCase() ? bankerName : referrer.bankName;
+
   return {
     ...referrer,
     name: input.name,
+    bankName: savedBankName,
     bankAccount: input.bankAccount,
     icNumber: input.icNumber?.trim() ?? referrer.icNumber,
-    registered: true,
+    tin: savedTin,
+    mykadAddress: savedAddress,
+    registered: Boolean(input.name.trim() && input.bankAccount.trim() && savedBankName && savedTin && savedAddress),
   };
 }
 

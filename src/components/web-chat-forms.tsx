@@ -207,15 +207,18 @@ function AddLeadFormCard({ form, busy, onCancel, onSubmit }: FormCardProps & { f
 
 function ProfileFormCard({ form, busy, onCancel, onSubmit }: FormCardProps & { form: WebchatProfileForm }) {
   const [name, setName] = useState(form.values.name);
-  const [bankAccount, setBankAccount] = useState(form.values.bankAccount);
   const [icNumber, setIcNumber] = useState(form.values.icNumber);
+  const [tin, setTin] = useState(form.values.tin);
+  const [mykadAddress, setMykadAddress] = useState(form.values.mykadAddress);
+  const [bankName, setBankName] = useState(form.values.bankName);
+  const [bankAccount, setBankAccount] = useState(form.values.bankAccount);
   const [errors, setErrors] = useState<FieldErrors>({});
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
     if (busy) return;
 
-    const fields = { name, bankAccount, icNumber };
+    const fields = { name, icNumber, tin, mykadAddress, bankName, bankAccount };
     const validated = validateProfileSubmission(fields);
 
     if (!validated.ok) {
@@ -231,7 +234,7 @@ function ProfileFormCard({ form, busy, onCancel, onSubmit }: FormCardProps & { f
   return (
     <FormShell
       title="My Details"
-      subtitle="介绍人资料 · used for your referral payout"
+      subtitle="介绍人资料 · TIN, MyKad address, and bank are required for payout"
       submitLabel="Save details"
       busy={busy}
       onCancel={onCancel}
@@ -254,22 +257,6 @@ function ProfileFormCard({ form, busy, onCancel, onSubmit }: FormCardProps & { f
       </div>
 
       <div>
-        <label className={LABEL_CLASS} htmlFor="profile-bank">
-          Bank account · 银行账号
-        </label>
-        <input
-          id="profile-bank"
-          value={bankAccount}
-          onChange={(event) => setBankAccount(event.target.value)}
-          disabled={busy}
-          className={INPUT_CLASS}
-          placeholder="Bank name and account number"
-          autoComplete="off"
-        />
-        <FieldError message={errors.bankAccount} />
-      </div>
-
-      <div>
         <label className={LABEL_CLASS} htmlFor="profile-ic">
           IC number · 身份证号码
         </label>
@@ -283,6 +270,71 @@ function ProfileFormCard({ form, busy, onCancel, onSubmit }: FormCardProps & { f
           autoComplete="off"
         />
         <FieldError message={errors.icNumber} />
+      </div>
+
+      <div>
+        <label className={LABEL_CLASS} htmlFor="profile-tin">
+          TIN (tax account) · 税务编号
+        </label>
+        <input
+          id="profile-tin"
+          value={tin}
+          onChange={(event) => setTin(event.target.value)}
+          disabled={busy}
+          className={INPUT_CLASS}
+          placeholder="e.g. IG115002000"
+          autoComplete="off"
+        />
+        <FieldError message={errors.tin} />
+      </div>
+
+      <div>
+        <label className={LABEL_CLASS} htmlFor="profile-address">
+          Address (as per MyKad) · 身份证地址
+        </label>
+        <textarea
+          id="profile-address"
+          value={mykadAddress}
+          onChange={(event) => setMykadAddress(event.target.value)}
+          disabled={busy}
+          rows={3}
+          className={`${INPUT_CLASS} resize-none`}
+          placeholder="Address exactly as printed on your MyKad"
+          autoComplete="off"
+        />
+        <FieldError message={errors.mykadAddress} />
+      </div>
+
+      <div>
+        <label className={LABEL_CLASS} htmlFor="profile-bank-name">
+          Bank · 银行
+        </label>
+        <input
+          id="profile-bank-name"
+          value={bankName}
+          onChange={(event) => setBankName(event.target.value)}
+          disabled={busy}
+          className={INPUT_CLASS}
+          placeholder="e.g. Maybank, CIMB, Public Bank"
+          autoComplete="off"
+        />
+        <FieldError message={errors.bankName} />
+      </div>
+
+      <div>
+        <label className={LABEL_CLASS} htmlFor="profile-bank">
+          Bank account · 银行账号
+        </label>
+        <input
+          id="profile-bank"
+          value={bankAccount}
+          onChange={(event) => setBankAccount(event.target.value)}
+          disabled={busy}
+          className={INPUT_CLASS}
+          placeholder="Account number only"
+          autoComplete="off"
+        />
+        <FieldError message={errors.bankAccount} />
       </div>
 
       <div>

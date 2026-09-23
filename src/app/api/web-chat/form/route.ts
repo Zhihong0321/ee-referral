@@ -31,8 +31,11 @@ const requestSchema = z.discriminatedUnion("kind", [
     kind: z.literal("profile"),
     phone: z.string().trim().min(1).max(30),
     name: z.string().max(300).default(""),
+    bankName: z.string().max(200).default(""),
     bankAccount: z.string().max(200).default(""),
     icNumber: z.string().max(100).default(""),
+    tin: z.string().max(100).default(""),
+    mykadAddress: z.string().max(800).default(""),
   }),
 ]);
 
@@ -140,14 +143,20 @@ export async function POST(request: Request) {
     await saveReferrerProfile(referrer, {
       name: profile.name,
       bankAccount: profile.bankAccount,
+      bankerName: profile.bankName,
       icNumber: profile.icNumber,
+      tin: profile.tin,
+      mykadAddress: profile.mykadAddress,
     });
 
     const summary = [
       "Submitted the My Details form.",
       `Name: ${profile.name}`,
-      `Bank account: ${maskSensitive(profile.bankAccount)}`,
       `IC number: ${maskSensitive(profile.icNumber)}`,
+      `TIN: ${maskSensitive(profile.tin)}`,
+      `Address (MyKad): ${profile.mykadAddress}`,
+      `Bank: ${profile.bankName}`,
+      `Bank account: ${maskSensitive(profile.bankAccount)}`,
     ].join("\n");
     const reply = `Your details are saved, ${profile.name}.\n\n${MENU_TEXT}`;
 

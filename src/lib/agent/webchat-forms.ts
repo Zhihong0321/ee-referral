@@ -26,7 +26,14 @@ export type WebchatAddLeadForm = {
 export type WebchatProfileForm = {
   kind: "profile";
   phone: string;
-  values: { name: string; bankAccount: string; icNumber: string };
+  values: {
+    name: string;
+    bankName: string;
+    bankAccount: string;
+    icNumber: string;
+    tin: string;
+    mykadAddress: string;
+  };
 };
 
 export type WebchatForm = WebchatAddLeadForm | WebchatProfileForm;
@@ -41,8 +48,11 @@ export type AddLeadSubmission = {
 
 export type ProfileSubmission = {
   name: string;
+  bankName: string;
   bankAccount: string;
   icNumber: string;
+  tin: string;
+  mykadAddress: string;
 };
 
 export type FieldErrors = Record<string, string>;
@@ -53,8 +63,11 @@ export const MAX_LEAD_NAME = 200;
 export const MAX_AREA = 200;
 export const MAX_REMARK = 500;
 export const MAX_REFERRER_NAME = 120;
+export const MAX_BANK_NAME = 80;
 export const MAX_BANK_ACCOUNT = 80;
 export const MAX_IC_NUMBER = 40;
+export const MAX_TIN = 40;
+export const MAX_MYKAD_ADDRESS = 400;
 
 export function isPlausibleMalaysiaMobile(canonicalPhone: string) {
   return /^60\d{9,11}$/.test(canonicalPhone);
@@ -64,10 +77,15 @@ function text(value: unknown, max: number) {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
 }
 
+function alphanumericLength(value: string) {
+  return value.replace(/[^A-Za-z0-9]/g, "").length;
+}
+
 /**
- * Bank and IC values are saved in full on the referrer's record, but the chat
- * transcript is a different audience: it is replayed into the browser and shown
- * in admin message views. Echo only the last four characters there.
+ * Bank account, IC, and TIN values are saved in full on the referrer's record,
+ * but the chat transcript is a different audience: it is replayed into the
+ * browser and shown in admin message views. Echo only the last four characters
+ * there.
  */
 export function maskSensitive(value: string) {
   const compact = value.replace(/\s+/g, "");
@@ -125,9 +143,18 @@ export function validateProfileSubmission(
     errors.name = "Enter your name.";
   }
 
+  const bankName = text(input.bankName, MAX_BANK_NAME);
+  if (!bankName) {
+    errors.bankName = "Enter your bank.";
+  } else if (!/[A-Za-z]/.test(bankName)) {
+    errors.bankName = "Enter the bank name, for example Maybank or CIMB.";
+  }
+
   const bankAccount = text(input.bankAccount, MAX_BANK_ACCOUNT);
   if (!bankAccount) {
     errors.bankAccount = "Enter your bank account number.";
+  } else if (bankAccount.replace(/\D/g, "").length < 5) {
+    errors.bankAccount = "That account number looks too short.";
   }
 
   // IC formats vary (old 7-digit, new 12-digit, passport for non-citizens), so
@@ -135,13 +162,29 @@ export function validateProfileSubmission(
   const icNumber = text(input.icNumber, MAX_IC_NUMBER);
   if (!icNumber) {
     errors.icNumber = "Enter your IC number.";
-  } else if (icNumber.replace(/[^A-Za-z0-9]/g, "").length < 6) {
+  } else if (alphanumericLength(icNumber) < 6) {
     errors.icNumber = "That IC number looks too short.";
+  }
+
+  // LHDN tax account numbers vary (IG/SG prefixes, hyphens, or a MyKad used as
+  // the TIN). Require a real identifier and reject obvious junk.
+  const tin = text(input.tin, MAX_TIN);
+  if (!tin) {
+    errors.tin = "Enter your TIN (tax account number).";
+  } else if (alphanumericLength(tin) < 8) {
+    errors.tin = "That TIN looks too short.";
+  }
+
+  const mykadAddress = text(input.mykadAddress, MAX_MYKAD_ADDRESS);
+  if (!mykadAddress) {
+    errors.mykadAddress = "Enter your address as shown on your MyKad.";
+  } else if (mykadAddress.length < 8) {
+    errors.mykadAddress = "Enter the full address printed on your MyKad.";
   }
 
   if (Object.keys(errors).length > 0) {
     return { ok: false, errors };
   }
 
-  return { ok: true, value: { name, bankAccount, icNumber } };
+  return { ok: true, value: { name, bankName, bankAccount, icNumber, tin, mykadAddress } };
 }
