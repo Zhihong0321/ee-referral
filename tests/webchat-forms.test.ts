@@ -81,37 +81,74 @@ test("add lead: non-string fields are treated as empty, not coerced", () => {
   assert.ok(!result.ok && result.errors.leadName);
 });
 
-test("profile: all three fields are required", () => {
-  const result = validateProfileSubmission({ name: "", bankAccount: "", icNumber: "" });
+const COMPLETE_PROFILE = {
+  name: "Siti",
+  bankName: "Maybank",
+  bankAccount: "1234567890",
+  icNumber: "900101-14-5678",
+  tin: "IG115002000",
+  mykadAddress: "No 12, Jalan Mawar, 50000 Kuala Lumpur",
+};
+
+test("profile: name, bank, account number, IC, TIN, and MyKad address are required", () => {
+  const result = validateProfileSubmission({
+    name: "",
+    bankName: "",
+    bankAccount: "",
+    icNumber: "",
+    tin: "",
+    mykadAddress: "",
+  });
   assert.equal(result.ok, false);
   assert.deepEqual(
     !result.ok && Object.keys(result.errors).sort(),
-    ["bankAccount", "icNumber", "name"],
+    ["bankAccount", "bankName", "icNumber", "mykadAddress", "name", "tin"],
   );
 });
 
-test("profile: a complete form trims each value", () => {
+test("profile: a complete form trims each value and keeps the bank separate from the account number", () => {
   const result = validateProfileSubmission({
     name: "  Siti  ",
-    bankAccount: " Maybank 1234567890 ",
+    bankName: " Maybank ",
+    bankAccount: " 1234567890 ",
     icNumber: " 900101-14-5678 ",
+    tin: " IG115002000 ",
+    mykadAddress: " No 12, Jalan Mawar, 50000 Kuala Lumpur ",
   });
   assert.equal(result.ok, true);
-  assert.deepEqual(result.ok && result.value, {
-    name: "Siti",
-    bankAccount: "Maybank 1234567890",
-    icNumber: "900101-14-5678",
-  });
+  assert.deepEqual(result.ok && result.value, COMPLETE_PROFILE);
 });
 
 test("profile: an IC with too few alphanumerics is rejected, separators do not count", () => {
-  const tooShort = validateProfileSubmission({ name: "Siti", bankAccount: "123", icNumber: "12-34" });
+  const tooShort = validateProfileSubmission({ ...COMPLETE_PROFILE, icNumber: "12-34" });
   assert.equal(tooShort.ok, false);
   assert.match((!tooShort.ok && tooShort.errors.icNumber) || "", /too short/);
 
   // A passport number is a valid IC value here — the check is deliberately loose.
-  const passport = validateProfileSubmission({ name: "Siti", bankAccount: "123", icNumber: "A1234567" });
+  const passport = validateProfileSubmission({ ...COMPLETE_PROFILE, icNumber: "A1234567" });
   assert.equal(passport.ok, true);
+});
+
+test("profile: TIN and MyKad address reject blanks and obvious junk", () => {
+  const shortTin = validateProfileSubmission({ ...COMPLETE_PROFILE, tin: "IG-12" });
+  assert.equal(shortTin.ok, false);
+  assert.match((!shortTin.ok && shortTin.errors.tin) || "", /too short/);
+
+  const shortAddress = validateProfileSubmission({ ...COMPLETE_PROFILE, mykadAddress: "KL" });
+  assert.equal(shortAddress.ok, false);
+  assert.match((!shortAddress.ok && shortAddress.errors.mykadAddress) || "", /full address/);
+});
+
+test("profile: a bank value with no letters is rejected", () => {
+  const result = validateProfileSubmission({ ...COMPLETE_PROFILE, bankName: "123456" });
+  assert.equal(result.ok, false);
+  assert.match((!result.ok && result.errors.bankName) || "", /bank name/);
+});
+
+test("profile: an account number needs at least five digits", () => {
+  const result = validateProfileSubmission({ ...COMPLETE_PROFILE, bankAccount: "12-34" });
+  assert.equal(result.ok, false);
+  assert.match((!result.ok && result.errors.bankAccount) || "", /too short/);
 });
 
 test("maskSensitive keeps only the last four characters, ignoring spacing", () => {
