@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "claude-session-sync",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["E:\\claude-session-sync\\server.js"],
+      "port": 8787
+    },
+    {
+      "name": "ee-referral-dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "port": 3000
+    }
+  ]
+}

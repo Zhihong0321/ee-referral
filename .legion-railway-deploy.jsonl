@@ -1,0 +1,45 @@
+{"message":"▲ Next.js 16.1.6","timestamp":"2026-07-30T08:29:47.118930744Z","level":"info"}
+{"message":"- Local:         http://3ee2080fe136:8080","timestamp":"2026-07-30T08:29:47.118933554Z","level":"info"}
+{"message":"- Network:       http://3ee2080fe136:8080","level":"info","timestamp":"2026-07-30T08:29:47.118936944Z"}
+{"timestamp":"2026-07-30T08:29:47.118940864Z","level":"info","message":""}
+{"message":"✓ Starting...","timestamp":"2026-07-30T08:29:47.118944424Z","level":"info"}
+{"timestamp":"2026-07-30T08:29:47.118947614Z","level":"info","message":"✓ Ready in 75ms"}
+{"level":"info","message":"Starting Container","timestamp":"2026-07-30T08:29:47.360196427Z"}
+{"status":"started","intervalMs":5000,"processUrl":"https://referral.atap.solar/api/whatsapp-agent/process","timestamp":"2026-07-30T08:29:51.370911975Z","at":"2026-07-30T08:29:51.330Z","level":"info","limit":10,"lookbackMinutes":60,"message":""}
+{"timestamp":"2026-07-30T08:29:51.512690295Z","error":"Unauthorized.","level":"error","message":"","at":"2026-07-30T08:29:51.484Z"}
+{"level":"error","timestamp":"2026-07-30T08:29:56.510723362Z","message":"","error":"Unauthorized.","at":"2026-07-30T08:29:56.502Z"}
+{"timestamp":"2026-07-30T08:30:01.553449665Z","message":"","error":"Unauthorized.","level":"error","at":"2026-07-30T08:30:01.534Z"}
+{"timestamp":"2026-07-30T08:30:06.560365321Z","level":"error","at":"2026-07-30T08:30:06.551Z","error":"Unauthorized.","message":""}
+{"error":"Unauthorized.","level":"error","at":"2026-07-30T08:30:11.573Z","timestamp":"2026-07-30T08:30:11.597790958Z","message":""}
+{"message":"","timestamp":"2026-07-30T08:30:16.597970309Z","error":"Unauthorized.","level":"error","at":"2026-07-30T08:30:16.590Z"}
+{"at":"2026-07-30T08:30:21.605Z","error":"Unauthorized.","message":"","timestamp":"2026-07-30T08:30:21.613813580Z","level":"error"}
+{"timestamp":"2026-07-30T08:30:26.830635369Z","level":"error","message":"","error":"Unauthorized.","at":"2026-07-30T08:30:26.621Z"}
+{"error":"Unauthorized.","level":"error","message":"","at":"2026-07-30T08:30:31.637Z","timestamp":"2026-07-30T08:30:31.641708995Z"}
+{"error":"Unauthorized.","at":"2026-07-30T08:30:36.653Z","timestamp":"2026-07-30T08:30:36.675170930Z","message":"","level":"error"}
+{"message":"","timestamp":"2026-07-30T08:30:41.678904060Z","at":"2026-07-30T08:30:41.670Z","level":"error","error":"Unauthorized."}
+{"message":"","at":"2026-07-30T08:30:46.685Z","timestamp":"2026-07-30T08:30:46.688272294Z","error":"Unauthorized.","level":"error"}
+{"timestamp":"2026-07-30T08:30:51.705995444Z","message":"","error":"Unauthorized.","at":"2026-07-30T08:30:51.700Z","level":"error"}
+{"message":"","error":"Unauthorized.","level":"error","timestamp":"2026-07-30T08:30:56.746470202Z","at":"2026-07-30T08:30:56.745Z"}
+{"timestamp":"2026-07-30T08:31:01.984080121Z","error":"Unauthorized.","at":"2026-07-30T08:31:01.758Z","message":"","level":"error"}
+{"timestamp":"2026-07-30T08:31:06.773549766Z","message":"","error":"Unauthorized.","level":"error","at":"2026-07-30T08:31:06.771Z"}
+{"level":"error","message":"","timestamp":"2026-07-30T08:31:11.798176330Z","at":"2026-07-30T08:31:11.784Z","error":"Unauthorized."}
+{"error":"Unauthorized.","level":"error","timestamp":"2026-07-30T08:31:16.916144876Z","at":"2026-07-30T08:31:16.802Z","message":""}
+{"error":"Unauthorized.","timestamp":"2026-07-30T08:31:21.833620955Z","level":"error","message":"","at":"2026-07-30T08:31:21.816Z"}
+{"timestamp":"2026-07-30T08:31:26.897403333Z","message":"","error":"Unauthorized.","level":"error","at":"2026-07-30T08:31:26.829Z"}
+{"timestamp":"2026-07-30T08:31:31.855799867Z","message":"","at":"2026-07-30T08:31:31.842Z","error":"Unauthorized.","level":"error"}
+{"level":"error","error":"Unauthorized.","timestamp":"2026-07-30T08:31:37.031485369Z","message":"","at":"2026-07-30T08:31:36.859Z"}
+{"level":"error","timestamp":"2026-07-30T08:31:41.878445963Z","message":"","at":"2026-07-30T08:31:41.870Z","error":"Unauthorized."}
+{"message":"","error":"Unauthorized.","level":"error","timestamp":"2026-07-30T08:31:46.913809542Z","at":"2026-07-30T08:31:46.884Z"}
+{"error":"Unauthorized.","level":"error","message":"","at":"2026-07-30T08:31:51.899Z","timestamp":"2026-07-30T08:31:52.040023955Z"}
+{"message":"","error":"Unauthorized.","timestamp":"2026-07-30T08:31:56.968527287Z","level":"error","at":"2026-07-30T08:31:56.910Z"}
+{"message":"","at":"2026-07-30T08:32:01.921Z","timestamp":"2026-07-30T08:32:01.984689423Z","error":"Unauthorized.","level":"error"}
+{"at":"2026-07-30T08:32:06.935Z","error":"Unauthorized.","message":"","timestamp":"2026-07-30T08:32:06.975685449Z","level":"error"}
+{"timestamp":"2026-07-30T08:32:11.956183035Z","at":"2026-07-30T08:32:11.950Z","level":"error","message":"","error":"Unauthorized."}
+{"timestamp":"2026-07-30T08:32:16.975089787Z","message":"","error":"Unauthorized.","at":"2026-07-30T08:32:16.963Z","level":"error"}
+{"message":"","timestamp":"2026-07-30T08:32:21.986964927Z","level":"error","at":"2026-07-30T08:32:21.976Z","error":"Unauthorized."}
+{"at":"2026-07-30T08:32:26.991Z","message":"","error":"Unauthorized.","level":"error","timestamp":"2026-07-30T08:32:27.009610340Z"}
+{"level":"error","timestamp":"2026-07-30T08:32:32.259513698Z","error":"Unauthorized.","message":"","at":"2026-07-30T08:32:32.013Z"}
+{"error":"Unauthorized.","timestamp":"2026-07-30T08:32:37.038577866Z","message":"","at":"2026-07-30T08:32:37.024Z","level":"error"}
+{"timestamp":"2026-07-30T08:32:42.072085855Z","level":"error","at":"2026-07-30T08:32:42.040Z","message":"","error":"Unauthorized."}
+{"error":"Unauthorized.","level":"error","at":"2026-07-30T08:32:47.057Z","message":"","timestamp":"2026-07-30T08:32:47.112573538Z"}
+{"error":"Unauthorized.","timestamp":"2026-07-30T08:32:52.111482462Z","level":"error","message":"","at":"2026-07-30T08:32:52.096Z"}

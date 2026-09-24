@@ -1,0 +1,8 @@
+error: unrecognized subcommand 'deployments'
+
+  tip: some similar subcommands exist: 'develop', 'deploy', 'deployment'
+
+Usage: railway.exe [COMMAND]
+
+For more information, try '--help'.
+

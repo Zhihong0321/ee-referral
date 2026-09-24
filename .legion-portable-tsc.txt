@@ -1,0 +1,1 @@
+webchat-portable/src/app/api/web-chat/message/route.ts(5,42): error TS2307: Cannot find module '@/lib/agent/whatsapp-processor' or its corresponding type declarations.

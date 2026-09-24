@@ -1,0 +1,58 @@
+diff --git a/src/lib/agent/whatsapp-flow-v2.ts b/src/lib/agent/whatsapp-flow-v2.ts
+index 2d5127f..a839df0 100644
+--- a/src/lib/agent/whatsapp-flow-v2.ts
++++ b/src/lib/agent/whatsapp-flow-v2.ts
+@@ -560,9 +560,14 @@ async function callAgentModel(
+         } catch {
+           parsedInput = {};
+         }
++        // Some OpenAI-compatible providers omit a tool-call ID. Generate one so the
++        // matching tool result always contains the required `tool_call_id` field.
++        const toolCallId = typeof tc.id === "string" && tc.id.trim()
++          ? tc.id
++          : `call_${crypto.randomUUID()}`;
+         blocks.push({
+           type: "tool_use",
+-          id: tc.id,
++          id: toolCallId,
+           name: tc.function.name,
+           input: parsedInput,
+         });
+diff --git a/src/lib/agent/whatsapp-flow.ts b/src/lib/agent/whatsapp-flow.ts
+index 43d335a..2fc67ca 100644
+--- a/src/lib/agent/whatsapp-flow.ts
++++ b/src/lib/agent/whatsapp-flow.ts
+@@ -315,7 +315,12 @@ async function callAgentModel(
+     } catch {
+       input = {};
+     }
+-    blocks.push({ type: "tool_use", id: toolCall.id, name: toolCall.function.name, input });
++    // Some OpenAI-compatible providers omit a tool-call ID. Generate one so the
++    // matching tool result always contains the required `tool_call_id` field.
++    const toolCallId = typeof toolCall.id === "string" && toolCall.id.trim()
++      ? toolCall.id
++      : `call_${crypto.randomUUID()}`;
++    blocks.push({ type: "tool_use", id: toolCallId, name: toolCall.function.name, input });
+   }
+   const textBlock = blocks.find((b) => b.type === "text") as { text: string } | undefined;
+   const replyText = textBlock?.text?.trim() || "";
+diff --git a/webchat-portable/src/lib/agent/whatsapp-flow-v2.ts b/webchat-portable/src/lib/agent/whatsapp-flow-v2.ts
+index 7e66349..68cef85 100644
+--- a/webchat-portable/src/lib/agent/whatsapp-flow-v2.ts
++++ b/webchat-portable/src/lib/agent/whatsapp-flow-v2.ts
+@@ -552,9 +552,14 @@ async function callAgentModel(
+         } catch {
+           parsedInput = {};
+         }
++        // Some OpenAI-compatible providers omit a tool-call ID. Generate one so the
++        // matching tool result always contains the required `tool_call_id` field.
++        const toolCallId = typeof tc.id === "string" && tc.id.trim()
++          ? tc.id
++          : `call_${crypto.randomUUID()}`;
+         blocks.push({
+           type: "tool_use",
+-          id: tc.id,
++          id: toolCallId,
+           name: tc.function.name,
+           input: parsedInput,
+         });

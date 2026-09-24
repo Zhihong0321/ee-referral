@@ -1,0 +1,8 @@
+[
+  {
+    "route": "/webchat",
+    "status": 200,
+    "png": "shots/webchat.png",
+    "consoleErrors": []
+  }
+]

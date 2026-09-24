@@ -1,0 +1,45 @@
+
+> ee-referal@0.1.0 build
+> next build
+
+▲ Next.js 16.1.6 (Turbopack)
+- Environments: .env.local
+
+  Creating an optimized production build ...
+✓ Compiled successfully in 6.4s
+  Running TypeScript ...
+  Collecting page data using 15 workers ...
+  Generating static pages using 15 workers (0/20) ...
+  Generating static pages using 15 workers (5/20) 
+  Generating static pages using 15 workers (10/20) 
+  Generating static pages using 15 workers (15/20) 
+✓ Generating static pages using 15 workers (20/20) in 374.5ms
+  Finalizing page optimization ...
+
+Route (app)
+┌ ○ /
+├ ○ /_not-found
+├ ƒ /admin
+├ ƒ /agent-sandbox
+├ ƒ /api/agent-sandbox/chat
+├ ƒ /api/web-chat/history
+├ ƒ /api/web-chat/login
+├ ƒ /api/web-chat/message
+├ ƒ /api/web-chat/reset
+├ ƒ /api/whatsapp-agent/diagnostics
+├ ƒ /api/whatsapp-agent/logs
+├ ƒ /api/whatsapp-agent/process
+├ ƒ /api/whatsapp-agent/test-v2
+├ ƒ /api/whatsapp-agent/webhook
+├ ƒ /auth/logout
+├ ƒ /auth/start
+├ ƒ /dashboard
+├ ƒ /referral-overview
+├ ○ /terms
+├ ƒ /webchat
+└ ○ /whatsapp-agent-monitor
+
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+

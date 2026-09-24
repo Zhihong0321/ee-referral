@@ -1,0 +1,7 @@
+Starting Container
+▲ Next.js 16.1.6
+- Local:         http://91463bab0ce1:8080
+- Network:       http://91463bab0ce1:8080
+
+✓ Starting...
+✓ Ready in 87ms

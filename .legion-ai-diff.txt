@@ -1,0 +1,812 @@
+diff --git a/.env.example b/.env.example
+index bf6c604..aeb4760 100644
+--- a/.env.example
++++ b/.env.example
+@@ -16,24 +16,10 @@ WHATSAPP_AGENT_TENANT_ID="1"
+ # Worker polls unreplied inbound WhatsApp rows in et_messages.
+ WHATSAPP_AGENT_DB_LOOKBACK_MINUTES="60"
+ 
+-# LLM that powers the agent (UniAPI / OpenAI / Anthropic format).
+-# REQUIRED in production — without it the agent cannot reply.
+-WHATSAPP_AGENT_LLM_API_KEY="sk-..."
+-MINIMAX_API_KEY="sk-..."
+-WHATSAPP_AGENT_LLM_BASE_URL="https://api.uniapi.io/v1"
+-WHATSAPP_AGENT_LLM_MODEL="gemini-3.5-flash-lite"
+-
+-# Voice-note transcription before the agent turn.
+-# UniAPI's Gemini-compatible endpoint is the verified provider path.
+-WHATSAPP_AGENT_ASR_PROVIDER="uniapi"
+-WHATSAPP_AGENT_UNIAPI_BASE_URL="https://api.uniapi.io/gemini"
+-WHATSAPP_AGENT_UNIAPI_API_KEY=""
+-WHATSAPP_AGENT_UNIAPI_ASR_MODEL="gemini-3.5-flash"
+-
+-# Image OCR / visual extraction. Required for image messages.
+-WHATSAPP_AGENT_VISION_BASE_URL="https://api.apikey.fun/v1"
+-WHATSAPP_AGENT_VISION_API_KEY=""
+-WHATSAPP_AGENT_VISION_MODEL="gpt-5.4-mini"
++# One OpenAI-compatible multimodal provider for chat, image extraction, and voice transcription.
++AI_API_KEY="sk-..."
++AI_BASE_URL="https://api.example.com/v1"
++AI_MODEL="your-multimodal-model"
+ 
+ # Phones (no +) that may view all referral leads.
+ WHATSAPP_AGENT_SUPER_ADMIN_PHONES="601121000099"
+diff --git a/CLAUDE.md b/CLAUDE.md
+index d8534af..6b51816 100644
+--- a/CLAUDE.md
++++ b/CLAUDE.md
+@@ -24,8 +24,9 @@ state.
+ Required:
+ 
+ - `DATABASE_URL` or the configured SQL proxy variables
+-- `MINIMAX_API_KEY` or `WHATSAPP_AGENT_LLM_API_KEY`
+-- `WHATSAPP_AGENT_VISION_API_KEY`
++- `AI_API_KEY`
++- `AI_BASE_URL`
++- `AI_MODEL`
+ - `WHATSAPP_AGENT_PROCESS_SECRET`
+ - `WHATSAPP_AGENT_DEBUG_SECRET`
+ - Baileys URL/session settings
+diff --git a/README.md b/README.md
+index 8d9758b..202d2d2 100644
+--- a/README.md
++++ b/README.md
+@@ -88,8 +88,9 @@ Railway environment variables to set:
+ - `WHATSAPP_AGENT_BAILEYS_SESSION_ID`
+ - `WHATSAPP_AGENT_PROCESS_SECRET`
+ - `WHATSAPP_AGENT_DEBUG_SECRET`
+-- `MINIMAX_API_KEY` or `WHATSAPP_AGENT_LLM_API_KEY`
+-- `WHATSAPP_AGENT_VISION_API_KEY`
++- `AI_API_KEY`
++- `AI_BASE_URL`
++- `AI_MODEL`
+ 
+ ## WhatsApp Agent Inbound Processing
+ 
+@@ -116,7 +117,7 @@ Media handling:
+ - `contact` / `contacts`: parsed from `raw_payload.message.contactMessage` or `contactsArrayMessage`, then saved through the deterministic lead workflow.
+ - `image`: `media_url` is resolved and sent to the configured vision model for extraction, then saved through the deterministic lead workflow when a phone is present.
+ - `video`: `media_url` is resolved and sent to the configured vision model for extraction.
+-- `audio` / voice note: `media_url` is downloaded and sent to ASR first, then the transcript is sent to the agent. The verified provider path is UniAPI's Gemini-compatible API with `WHATSAPP_AGENT_ASR_PROVIDER=uniapi`, `WHATSAPP_AGENT_UNIAPI_BASE_URL=https://api.uniapi.io/gemini`, and `WHATSAPP_AGENT_UNIAPI_API_KEY`.
++- `audio` / voice note: `media_url` is downloaded and sent to the configured OpenAI-compatible `/audio/transcriptions` endpoint, then the transcript is sent to the agent.
+ - `document` / `sticker`: caption, filename, and media URL are preserved; the agent asks for missing text details when the content is not extractable.
+ 
+ Webhook/testing payloads are still supported through:
+diff --git a/docs/WHATSAPP_AGENT_V2.md b/docs/WHATSAPP_AGENT_V2.md
+index e08fc4e..f957260 100644
+--- a/docs/WHATSAPP_AGENT_V2.md
++++ b/docs/WHATSAPP_AGENT_V2.md
+@@ -67,8 +67,8 @@ enforced in code, not just the prompt:
+   mechanically. Runs against a dedicated test phone; prints a manual cleanup SQL
+   for any rows it creates (prod deletes require explicit approval).
+ 
+-Run the dev server with the correct `MINIMAX_API_KEY` exported into its
+-environment (a stale OS-level `MINIMAX_API_KEY` will otherwise override
++Run the dev server with the correct `AI_API_KEY` exported into its
++environment (a stale OS-level `AI_API_KEY` will otherwise override
+ `.env.local` and cause 401s), then:
+ 
+ ```
+diff --git a/scripts/debug-whatsapp-media.mjs b/scripts/debug-whatsapp-media.mjs
+index fc21642..48190de 100644
+--- a/scripts/debug-whatsapp-media.mjs
++++ b/scripts/debug-whatsapp-media.mjs
+@@ -84,12 +84,9 @@ function getConfig() {
+     dbName,
+     databaseUrl: process.env.DATABASE_URL || "",
+     baileysBaseUrl,
+-    llmModel: process.env.WHATSAPP_AGENT_LLM_MODEL || "MiniMax-M3",
+-    hasLlmApiKey: Boolean(process.env.WHATSAPP_AGENT_LLM_API_KEY || process.env.MINIMAX_API_KEY),
+-    asrProvider: process.env.WHATSAPP_AGENT_ASR_PROVIDER || "",
+-    asrModel: process.env.WHATSAPP_AGENT_UNIAPI_ASR_MODEL || "",
+-    hasUniApiKey: Boolean(process.env.WHATSAPP_AGENT_UNIAPI_API_KEY),
+-    uniApiBaseUrl: (process.env.WHATSAPP_AGENT_UNIAPI_BASE_URL || "").replace(/\/$/, ""),
++    aiModel: process.env.AI_MODEL || "",
++    hasAiApiKey: Boolean(process.env.AI_API_KEY),
++    aiBaseUrl: (process.env.AI_BASE_URL || "").replace(/\/$/, ""),
+   };
+ }
+ 
+@@ -341,17 +338,8 @@ function audioMimeType(url) {
+ 
+ async function transcribeUrl(url) {
+   const config = getConfig();
+-  if (config.asrProvider !== "uniapi") {
+-    throw new Error("ASR debug requires WHATSAPP_AGENT_ASR_PROVIDER=uniapi.");
+-  }
+-  if (!config.hasUniApiKey) {
+-    throw new Error("ASR debug requires WHATSAPP_AGENT_UNIAPI_API_KEY.");
+-  }
+-  if (!config.uniApiBaseUrl) {
+-    throw new Error("ASR debug requires WHATSAPP_AGENT_UNIAPI_BASE_URL.");
+-  }
+-  if (!config.asrModel) {
+-    throw new Error("ASR debug requires WHATSAPP_AGENT_UNIAPI_ASR_MODEL.");
++  if (!config.hasAiApiKey || !config.aiBaseUrl || !config.aiModel) {
++    throw new Error("ASR debug requires AI_API_KEY, AI_BASE_URL, and AI_MODEL.");
+   }
+ 
+   const resolved = resolveMediaUrl(url);
+@@ -361,42 +349,31 @@ async function transcribeUrl(url) {
+   }
+ 
+   const bytes = await audioResponse.arrayBuffer();
+-  const contentType = audioResponse.headers.get("content-type") || audioMimeType(resolved);
+-
+-  const response = await fetch(`${config.uniApiBaseUrl}/v1beta/models/${encodeURIComponent(config.asrModel)}:generateContent`, {
++  const contentType = (audioResponse.headers.get("content-type") || audioMimeType(resolved)).split(";")[0].trim();
++  const extension = contentType.includes("ogg") ? "ogg" : contentType.includes("webm") ? "webm" : contentType.includes("wav") ? "wav" : "mp3";
++  const form = new FormData();
++  form.append("file", new Blob([bytes], { type: contentType }), `whatsapp-voice.${extension}`);
++  form.append("model", config.aiModel);
++  form.append("prompt", "Transcribe the WhatsApp voice note exactly in its original language.");
++
++  const response = await fetch(`${config.aiBaseUrl}/audio/transcriptions`, {
+     method: "POST",
+     headers: {
+-      "x-goog-api-key": process.env.WHATSAPP_AGENT_UNIAPI_API_KEY,
+-      "Content-Type": "application/json",
++      Authorization: `Bearer ${process.env.AI_API_KEY}`,
+     },
+-    body: JSON.stringify({
+-      contents: [
+-        {
+-          role: "user",
+-          parts: [
+-            { text: "Transcribe this WhatsApp voice note exactly. Return only the transcript text." },
+-            { inline_data: { mime_type: contentType, data: Buffer.from(bytes).toString("base64") } },
+-          ],
+-        },
+-      ],
+-    }),
++    body: form,
+   });
+   const text = await response.text();
+   if (!response.ok) {
+-    throw new Error(`UniAPI ASR HTTP ${response.status}: ${text.slice(0, 500)}`);
++    throw new Error(`AI transcription HTTP ${response.status}: ${text.slice(0, 500)}`);
+   }
+   const payload = JSON.parse(text);
+   return {
+     url: resolved,
+-    provider: "uniapi",
+-    endpoint: `${config.uniApiBaseUrl}/v1beta/models/${config.asrModel}:generateContent`,
+-    model: config.asrModel,
+-    transcript:
+-      payload.candidates?.[0]?.content?.parts
+-        ?.map((part) => part.text?.trim() || "")
+-        .filter(Boolean)
+-        .join("\n")
+-        .trim() || "",
++    provider: "openai-compatible",
++    endpoint: `${config.aiBaseUrl}/audio/transcriptions`,
++    model: config.aiModel,
++    transcript: payload.text?.trim() || "",
+     response: payload,
+   };
+ }
+diff --git a/src/app/api/whatsapp-agent/diagnostics/route.ts b/src/app/api/whatsapp-agent/diagnostics/route.ts
+index 6788dd0..9ae8223 100644
+--- a/src/app/api/whatsapp-agent/diagnostics/route.ts
++++ b/src/app/api/whatsapp-agent/diagnostics/route.ts
+@@ -53,15 +53,12 @@ export async function GET(request: Request) {
+       hasProxyUrl: Boolean(process.env.WHATSAPP_AGENT_PROXY_URL || process.env.SANDBOX_PROXY_URL),
+       hasProxyAuth: Boolean(process.env.WHATSAPP_AGENT_PROXY_AUTH || process.env.SANDBOX_PROXY_AUTH),
+       hasWebhookVerifyToken: Boolean(process.env.WHATSAPP_AGENT_WEBHOOK_VERIFY_TOKEN),
+-      hasLlmApiKey: Boolean(process.env.WHATSAPP_AGENT_LLM_API_KEY || process.env.MINIMAX_API_KEY),
+-      hasVisionApiKey: Boolean(process.env.WHATSAPP_AGENT_VISION_API_KEY),
++      hasAiApiKey: Boolean(process.env.AI_API_KEY),
++      hasAiBaseUrl: Boolean(process.env.AI_BASE_URL),
++      hasAiModel: Boolean(process.env.AI_MODEL),
+       hasProcessSecret: Boolean(process.env.WHATSAPP_AGENT_PROCESS_SECRET),
+       hasDebugSecret: Boolean(process.env.WHATSAPP_AGENT_DEBUG_SECRET),
+-      llmModel: process.env.WHATSAPP_AGENT_LLM_MODEL || "MiniMax-M3",
+-      asrProvider: process.env.WHATSAPP_AGENT_ASR_PROVIDER || "",
+-      hasUniApiKey: Boolean(process.env.WHATSAPP_AGENT_UNIAPI_API_KEY),
+-      uniApiBaseUrl: process.env.WHATSAPP_AGENT_UNIAPI_BASE_URL || "",
+-      uniApiAsrModel: process.env.WHATSAPP_AGENT_UNIAPI_ASR_MODEL || "",
++      aiModel: process.env.AI_MODEL || "",
+       baileysBaseUrl,
+       sessionId,
+       tenantId: config.tenantId,
+diff --git a/src/lib/agent/whatsapp-flow-v2.ts b/src/lib/agent/whatsapp-flow-v2.ts
+index 344f4d1..cf72275 100644
+--- a/src/lib/agent/whatsapp-flow-v2.ts
++++ b/src/lib/agent/whatsapp-flow-v2.ts
+@@ -6,6 +6,7 @@
+  */
+ 
+ import { COMPANY_LEGAL_NAME, REFERRAL_TERMS } from "@/lib/terms";
++import { getAiConfig, getOpenAiChatCompletionsUrl } from "@/lib/ai";
+ import {
+   appendAgentDebugLog,
+   listWhatsappAgents,
+@@ -37,29 +38,13 @@ import {
+ } from "./whatsapp-history";
+ 
+ const PORTAL_URL = process.env.WHATSAPP_AGENT_PORTAL_URL || "https://referral.atap.solar/";
+-const LLM_BASE_URL = (process.env.WHATSAPP_AGENT_LLM_BASE_URL || "https://token-plan-sgp.xiaomimimo.com").replace(/\/$/, "");
+-const LLM_MODEL = process.env.WHATSAPP_AGENT_LLM_MODEL || "mimo-v2.5-pro";
+-const LLM_API_KEY = process.env.WHATSAPP_AGENT_LLM_API_KEY || process.env.MINIMAX_API_KEY || "";
++const AI = getAiConfig();
++const LLM_BASE_URL = AI.baseUrl;
++const LLM_MODEL = AI.model;
++const LLM_API_KEY = AI.apiKey;
+ 
+ function getLlmConfig(baseUrl: string): { format: "anthropic" | "openai"; endpoint: string } {
+-  const clean = baseUrl.replace(/\/$/, "");
+-  const lower = clean.toLowerCase();
+-
+-  if (lower.includes("xiaomimimo") || lower.includes("minimax") || lower.includes("anthropic") || lower.endsWith("/messages")) {
+-    let endpoint = clean;
+-    if (!endpoint.endsWith("/messages")) {
+-      if (endpoint.endsWith("/v1")) endpoint = `${endpoint}/messages`;
+-      else endpoint = `${endpoint}/anthropic/v1/messages`;
+-    }
+-    return { format: "anthropic", endpoint };
+-  }
+-
+-  let endpoint = clean;
+-  if (!endpoint.endsWith("/chat/completions")) {
+-    if (endpoint.endsWith("/v1")) endpoint = `${endpoint}/chat/completions`;
+-    else endpoint = `${endpoint}/v1/chat/completions`;
+-  }
+-  return { format: "openai", endpoint };
++  return { format: "openai", endpoint: getOpenAiChatCompletionsUrl(baseUrl) };
+ }
+ 
+ 
+@@ -164,7 +149,7 @@ export async function runWhatsappAgentTurnV2(input: {
+   const startedAt = Date.now();
+ 
+   if (!LLM_API_KEY) {
+-    throw new Error("WHATSAPP_AGENT_LLM_API_KEY (or MINIMAX_API_KEY) is not set.");
++    throw new Error("AI_API_KEY is not set.");
+   }
+ 
+   // Admin mode is a stateful session anyone can enter by sending "ee-admin"
+@@ -462,16 +447,24 @@ async function callAgentModel(
+   let blocks: ModelContentBlock[] = [];
+ 
+   if (format === "openai") {
+-    const oaiTools = tools.map((t: any) => ({
+-      type: "function",
+-      function: {
+-        name: t.name,
+-        description: t.description,
+-        parameters: t.input_schema || t.parameters || { type: "object", properties: {} },
+-      },
+-    }));
++    const oaiTools = tools.map((tool) => {
++      const definition = tool as {
++        name: string;
++        description: string;
++        input_schema?: Record<string, unknown>;
++        parameters?: Record<string, unknown>;
++      };
++      return {
++        type: "function",
++        function: {
++          name: definition.name,
++          description: definition.description,
++          parameters: definition.input_schema || definition.parameters || { type: "object", properties: {} },
++        },
++      };
++    });
+ 
+-    const oaiMessages: any[] = [];
++    const oaiMessages: Array<Record<string, unknown>> = [];
+     if (system) {
+       oaiMessages.push({ role: "system", content: system });
+     }
+@@ -486,14 +479,14 @@ async function callAgentModel(
+             for (const tr of toolResults) {
+               oaiMessages.push({
+                 role: "tool",
+-                tool_call_id: (tr as any).tool_use_id,
++                tool_call_id: tr.tool_use_id,
+                 content: typeof tr.content === "string" ? tr.content : JSON.stringify(tr.content),
+               });
+             }
+           } else {
+             const text = msg.content
+               .filter((b) => b.type === "text")
+-              .map((b) => (b as any).text)
++              .map((b) => (b as { text: string }).text)
+               .join("\n");
+             oaiMessages.push({ role: "user", content: text });
+           }
+diff --git a/src/lib/agent/whatsapp-flow.ts b/src/lib/agent/whatsapp-flow.ts
+index 2dfe0b5..5832e8c 100644
+--- a/src/lib/agent/whatsapp-flow.ts
++++ b/src/lib/agent/whatsapp-flow.ts
+@@ -1,4 +1,5 @@
+ import { COMPANY_LEGAL_NAME, REFERRAL_TERMS } from "@/lib/terms";
++import { getAiConfig } from "@/lib/ai";
+ import {
+   appendAgentDebugLog,
+   listWhatsappAgents,
+@@ -19,16 +20,9 @@ import { toCanonicalMalaysiaPhone } from "@/lib/phone-normalization";
+ import { matchAgentName } from "@/lib/agent/whatsapp-intent";
+ 
+ const PORTAL_URL = process.env.WHATSAPP_AGENT_PORTAL_URL || "https://referral.atap.solar/";
+-const LLM_BASE_URL = (process.env.WHATSAPP_AGENT_LLM_BASE_URL || "https://token-plan-sgp.xiaomimimo.com").replace(/\/$/, "");
+-const LLM_MODEL = process.env.WHATSAPP_AGENT_LLM_MODEL || "mimo-v2.5-pro";
+-const LLM_API_KEY = process.env.WHATSAPP_AGENT_LLM_API_KEY || process.env.MINIMAX_API_KEY || "";
+-
+-function getLlmEndpoint(baseUrl: string): string {
+-  const clean = baseUrl.replace(/\/$/, "");
+-  if (clean.endsWith("/messages")) return clean;
+-  if (clean.endsWith("/v1")) return `${clean}/messages`;
+-  return `${clean}/anthropic/v1/messages`;
+-}
++const AI = getAiConfig();
++const LLM_MODEL = AI.model;
++const LLM_API_KEY = AI.apiKey;
+ 
+ const WRITE_CLAIM_PATTERN =
+   /\b(?:done|all set)\b|\b(?:i(?:'ve| have)?|we(?:'ve| have)?)\s+(?:added|saved|updated|assigned|registered|notified|changed)\b|已(?:添加|保存|更新|分配|登记|注册)|添加成功|保存成功|berjaya (?:simpan|tambah|daftar)|sudah (?:simpan|tambah|daftar)/i;
+@@ -225,46 +219,107 @@ async function callAgentModel(
+ ): Promise<{ reply: string; toolTrace: WhatsappWorkflowTrace[] }> {
+   if (depth > 5) return { reply: "Too many operations. Please try again.", toolTrace: [] };
+ 
+-  const body: Record<string, unknown> = {
+-    model: LLM_MODEL,
+-    max_tokens: 700,
+-    system,
+-    messages,
+-  };
+-  if (tools && tools.length > 0) {
+-    body.tools = tools;
++  const openAiTools = (tools || []).map((tool) => {
++    const definition = tool as {
++      name: string;
++      description: string;
++      input_schema?: Record<string, unknown>;
++      parameters?: Record<string, unknown>;
++    };
++    return {
++      type: "function",
++      function: {
++        name: definition.name,
++        description: definition.description,
++        parameters: definition.input_schema || definition.parameters || { type: "object", properties: {} },
++      },
++    };
++  });
++  const openAiMessages: Array<Record<string, unknown>> = [{ role: "system", content: system }];
++
++  for (const message of messages) {
++    if (typeof message.content === "string") {
++      openAiMessages.push({ role: message.role, content: message.content });
++      continue;
++    }
++
++    if (message.role === "user") {
++      const toolResults = message.content.filter((block) => block.type === "tool_result");
++      if (toolResults.length > 0) {
++        for (const result of toolResults) {
++          openAiMessages.push({
++            role: "tool",
++            tool_call_id: result.tool_use_id,
++            content: result.content,
++          });
++        }
++      }
++      continue;
++    }
++
++    const textBlock = message.content.find((block) => block.type === "text") as { text: string } | undefined;
++    const toolUseBlocks = message.content.filter((block) => block.type === "tool_use") as Array<{
++      id: string;
++      name: string;
++      input: Record<string, unknown>;
++    }>;
++    openAiMessages.push({
++      role: "assistant",
++      content: textBlock?.text || null,
++      tool_calls: toolUseBlocks.map((toolUse) => ({
++        id: toolUse.id,
++        type: "function",
++        function: { name: toolUse.name, arguments: JSON.stringify(toolUse.input) },
++      })),
++    });
+   }
+ 
+-  const response = await fetch(getLlmEndpoint(LLM_BASE_URL), {
++  const response = await fetch(AI.chatCompletionsUrl, {
+     method: "POST",
+     headers: {
+-      "authorization": `Bearer ${LLM_API_KEY}`,
+-      "x-api-key": LLM_API_KEY,
+-      "api-key": LLM_API_KEY,
+-      "anthropic-version": "2023-06-01",
++      "Authorization": `Bearer ${LLM_API_KEY}`,
+       "Content-Type": "application/json",
+     },
+-    body: JSON.stringify(body),
++    body: JSON.stringify({
++      model: LLM_MODEL,
++      messages: openAiMessages,
++      tools: openAiTools.length > 0 ? openAiTools : undefined,
++    }),
+   });
+   const text = await response.text();
+   if (!response.ok) {
+-    throw new Error(`LLM HTTP ${response.status} [endpoint: ${getLlmEndpoint(LLM_BASE_URL)}, model: ${LLM_MODEL}]: ${text.slice(0, 300)}`);
++    throw new Error(`AI HTTP ${response.status} [endpoint: ${AI.chatCompletionsUrl}, model: ${LLM_MODEL}]: ${text.slice(0, 300)}`);
+   }
+ 
+   const payload = JSON.parse(text) as {
+-    content?: ModelContentBlock[];
+-    stop_reason?: string;
+-    base_resp?: { status_code?: number; status_msg?: string };
++    choices?: Array<{
++      message?: {
++        content?: string;
++        tool_calls?: Array<{
++          id: string;
++          function: { name: string; arguments: string | Record<string, unknown> };
++        }>;
++      };
++    }>;
+   };
+-  if (payload.base_resp?.status_code) {
+-    throw new Error(`LLM error: ${payload.base_resp.status_msg || payload.base_resp.status_code}`);
++  const choiceMessage = payload.choices?.[0]?.message;
++  const blocks: ModelContentBlock[] = [];
++  if (choiceMessage?.content?.trim()) {
++    blocks.push({ type: "text", text: choiceMessage.content.trim() });
++  }
++  for (const toolCall of choiceMessage?.tool_calls || []) {
++    let input: Record<string, unknown> = {};
++    try {
++      input = typeof toolCall.function.arguments === "string" ? JSON.parse(toolCall.function.arguments) : toolCall.function.arguments;
++    } catch {
++      input = {};
++    }
++    blocks.push({ type: "tool_use", id: toolCall.id, name: toolCall.function.name, input });
+   }
+-
+-  const blocks = payload.content || [];
+   const textBlock = blocks.find((b) => b.type === "text") as { text: string } | undefined;
+   const replyText = textBlock?.text?.trim() || "";
+ 
+-  if (payload.stop_reason === "tool_use" || blocks.some((b) => b.type === "tool_use")) {
++  if (blocks.some((b) => b.type === "tool_use")) {
+     messages.push({ role: "assistant", content: blocks });
+     
+     const toolResults: ModelContentBlock[] = [];
+@@ -366,7 +421,7 @@ export async function runWhatsappAgentTurn(input: { senderPhone: string; text: s
+   }
+ 
+   if (!LLM_API_KEY) {
+-    throw new Error("WHATSAPP_AGENT_LLM_API_KEY (or MINIMAX_API_KEY) is not set.");
++    throw new Error("AI_API_KEY is not set.");
+   }
+ 
+   const admin = isAdminAuthorized(input.senderPhone);
+diff --git a/src/lib/agent/whatsapp-processor.ts b/src/lib/agent/whatsapp-processor.ts
+index c674678..b4e6e74 100644
+--- a/src/lib/agent/whatsapp-processor.ts
++++ b/src/lib/agent/whatsapp-processor.ts
+@@ -9,6 +9,7 @@ import {
+ } from "@/lib/agent/whatsapp-data";
+ import { runWhatsappAgentTurn } from "@/lib/agent/whatsapp-flow";
+ import { runWhatsappAgentTurnV2 } from "@/lib/agent/whatsapp-flow-v2";
++import { getAiConfig, getOpenAiApiUrl } from "@/lib/ai";
+ import { toCanonicalMalaysiaPhone } from "@/lib/phone-normalization";
+ 
+ /**
+@@ -189,70 +190,31 @@ async function transcribeWhatsappAudio(mediaUrl: string) {
+     throw new Error(`Unable to download WhatsApp audio: HTTP ${audioResponse.status}`);
+   }
+ 
+-  const contentType = audioResponse.headers.get("content-type") || getAudioMimeType(resolvedUrl);
++  const contentType = (audioResponse.headers.get("content-type") || getAudioMimeType(resolvedUrl)).split(";")[0].trim();
+   const audioBytes = await audioResponse.arrayBuffer();
+-  const provider = (process.env.WHATSAPP_AGENT_ASR_PROVIDER || "").trim().toLowerCase();
+-  if (provider !== "uniapi") {
+-    throw new Error("Voice-note transcription requires WHATSAPP_AGENT_ASR_PROVIDER=uniapi.");
+-  }
+-
+-  const uniApiKey = process.env.WHATSAPP_AGENT_UNIAPI_API_KEY || "";
+-  if (!uniApiKey) {
+-    throw new Error("WHATSAPP_AGENT_UNIAPI_API_KEY is not set.");
+-  }
+-
+-  const baseUrl = (process.env.WHATSAPP_AGENT_UNIAPI_BASE_URL || "").replace(/\/$/, "");
+-  if (!baseUrl) {
+-    throw new Error("WHATSAPP_AGENT_UNIAPI_BASE_URL is not set.");
+-  }
+-
+-  const model = process.env.WHATSAPP_AGENT_UNIAPI_ASR_MODEL || "";
+-  if (!model) {
+-    throw new Error("WHATSAPP_AGENT_UNIAPI_ASR_MODEL is not set.");
+-  }
+-
+-  const audioBase64 = Buffer.from(audioBytes).toString("base64");
+-  const response = await fetch(`${baseUrl}/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
++  const ai = getAiConfig();
++  const form = new FormData();
++  const extension = contentType.includes("ogg") ? "ogg" : contentType.includes("webm") ? "webm" : contentType.includes("wav") ? "wav" : "mp3";
++  form.append("file", new Blob([audioBytes], { type: contentType }), `whatsapp-voice.${extension}`);
++  form.append("model", ai.model);
++  form.append("prompt", "Transcribe the WhatsApp voice note exactly in its original language.");
++
++  const response = await fetch(getOpenAiApiUrl(ai.baseUrl, "audio/transcriptions"), {
+     method: "POST",
+     headers: {
+-      "x-goog-api-key": uniApiKey,
+-      "Content-Type": "application/json",
++      "Authorization": `Bearer ${ai.apiKey}`,
+     },
+-    body: JSON.stringify({
+-      contents: [
+-        {
+-          role: "user",
+-          parts: [
+-            {
+-              text: "Transcribe this WhatsApp voice note exactly. Return only the transcript text. If the speech is not English, Malay, or Chinese, still transcribe in the original language.",
+-            },
+-            {
+-              inline_data: {
+-                mime_type: contentType,
+-                data: audioBase64,
+-              },
+-            },
+-          ],
+-        },
+-      ],
+-    }),
++    body: form,
+   });
+   const text = await response.text();
+   if (!response.ok) {
+-    throw new Error(`UniAPI ASR failed: HTTP ${response.status}: ${text.slice(0, 300)}`);
++    throw new Error(`AI transcription failed: HTTP ${response.status}: ${text.slice(0, 300)}`);
+   }
+ 
+-  const payload = JSON.parse(text) as {
+-    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+-  };
+-  const transcript =
+-    payload.candidates?.[0]?.content?.parts
+-      ?.map((part) => part.text?.trim() || "")
+-      .filter(Boolean)
+-      .join("\n")
+-      .trim() || "";
++  const payload = JSON.parse(text) as { text?: string };
++  const transcript = payload.text?.trim() || "";
+   if (transcript) return transcript;
+-  throw new Error("UniAPI ASR returned an empty transcript.");
++  throw new Error("AI transcription returned an empty transcript.");
+ }
+ 
+ async function describeWhatsappVisual(mediaUrl: string, messageType: "image" | "video", caption: string) {
+@@ -280,17 +242,7 @@ export async function convertVisualBytesToText(input: {
+   caption: string;
+ }) {
+   const { contentType, base64: mediaBase64, messageType, caption } = input;
+-  const apiKey = process.env.WHATSAPP_AGENT_VISION_API_KEY || "";
+-  if (!apiKey) {
+-    throw new Error("Vision API key is not set.");
+-  }
+-
+-  const baseUrl = (process.env.WHATSAPP_AGENT_VISION_BASE_URL || "https://api.apikey.fun/v1").replace(/\/$/, "");
+-  if (!baseUrl) {
+-    throw new Error("Vision API base URL is not set.");
+-  }
+-
+-  const model = process.env.WHATSAPP_AGENT_VISION_MODEL || "gpt-5.4-mini";
++  const ai = getAiConfig();
+ 
+   const promptText = [
+     `Convert this WhatsApp ${messageType} into plain text for a referral assistant.`,
+@@ -309,14 +261,14 @@ export async function convertVisualBytesToText(input: {
+   const timeoutId = setTimeout(() => abortController.abort(), 60000); // 60 seconds timeout
+ 
+   try {
+-    const response = await fetch(`${baseUrl}/chat/completions`, {
++    const response = await fetch(ai.chatCompletionsUrl, {
+       method: "POST",
+       headers: {
+-        "Authorization": `Bearer ${apiKey}`,
++        "Authorization": `Bearer ${ai.apiKey}`,
+         "Content-Type": "application/json",
+       },
+       body: JSON.stringify({
+-        model: model,
++        model: ai.model,
+         messages: [
+           {
+             role: "user",
+@@ -339,7 +291,7 @@ export async function convertVisualBytesToText(input: {
+ 
+     const text = await response.text();
+     if (!response.ok) {
+-      throw new Error(`Vision API failed: HTTP ${response.status}: ${text.slice(0, 300)}`);
++      throw new Error(`AI vision failed: HTTP ${response.status}: ${text.slice(0, 300)}`);
+     }
+ 
+     const payload = JSON.parse(text) as {
+@@ -348,11 +300,11 @@ export async function convertVisualBytesToText(input: {
+ 
+     const converted = payload.choices?.[0]?.message?.content?.trim() || "";
+     if (converted) return converted;
+-    throw new Error(`Vision API returned empty text.`);
++    throw new Error(`AI vision returned empty text.`);
+   } catch (error) {
+     clearTimeout(timeoutId);
+     if (error instanceof Error && error.name === "AbortError") {
+-      throw new Error(`Vision API timed out after 60 seconds.`);
++      throw new Error(`AI vision timed out after 60 seconds.`);
+     }
+     throw error;
+   }
+diff --git a/webchat-portable/.env.example b/webchat-portable/.env.example
+index 04cfbed..7bc613f 100644
+--- a/webchat-portable/.env.example
++++ b/webchat-portable/.env.example
+@@ -16,16 +16,10 @@ WHATSAPP_AGENT_TENANT_ID="1"
+ # WHATSAPP_AGENT_PROXY_AUTH="Bearer ..."
+ # WHATSAPP_AGENT_PROXY_DB_NAME="prod_main"
+ 
+-# Required to generate assistant replies.
+-WHATSAPP_AGENT_LLM_BASE_URL="https://api.uniapi.io/v1"
+-WHATSAPP_AGENT_LLM_MODEL="gemini-3.5-flash-lite"
+-WHATSAPP_AGENT_LLM_API_KEY=""
+-MINIMAX_API_KEY=""
+-
+-# Optional. Required only when users upload images.
+-WHATSAPP_AGENT_VISION_BASE_URL="https://api.apikey.fun/v1"
+-WHATSAPP_AGENT_VISION_MODEL="gpt-5.4-mini"
+-WHATSAPP_AGENT_VISION_API_KEY=""
++# Required for assistant replies and image uploads.
++AI_API_KEY=""
++AI_BASE_URL="https://api.example.com/v1"
++AI_MODEL="your-multimodal-model"
+ 
+ # Optional. This URL is included in assistant guidance.
+ WHATSAPP_AGENT_PORTAL_URL="https://referral.atap.solar/"
+diff --git a/webchat-portable/README.md b/webchat-portable/README.md
+index 1a3062d..4b0ea1e 100644
+--- a/webchat-portable/README.md
++++ b/webchat-portable/README.md
+@@ -14,7 +14,7 @@ No credential files are copied from the main application.
+ 
+ 1. Copy `.env.example` to `.env.local`.
+ 2. Set the same `DATABASE_URL`, `JWT_SECRET`, `WHATSAPP_AGENT_BAILEYS_SESSION_ID`, and `WHATSAPP_AGENT_TENANT_ID` used by the current referral app.
+-3. Add `MINIMAX_API_KEY`. Add the vision variables if image uploads should work.
++3. Add `AI_API_KEY`, `AI_BASE_URL`, and `AI_MODEL`. The model must support images for uploads.
+ 4. Install and start:
+ 
+    ```bash
+diff --git a/webchat-portable/how-to-integrate.md b/webchat-portable/how-to-integrate.md
+index 0e4ff8e..270c91c 100644
+--- a/webchat-portable/how-to-integrate.md
++++ b/webchat-portable/how-to-integrate.md
+@@ -33,15 +33,15 @@ WHATSAPP_AGENT_BAILEYS_SESSION_ID="same-session-id"
+ WHATSAPP_AGENT_TENANT_ID="same-tenant-id"
+ ```
+ 
+-Use the same LLM configuration when you want the assistant to behave consistently:
++Use the same multimodal AI configuration when you want the assistant to behave consistently:
+ 
+ ```dotenv
+-WHATSAPP_AGENT_LLM_BASE_URL="https://..."
+-WHATSAPP_AGENT_LLM_MODEL="..."
+-MINIMAX_API_KEY="..."
++AI_BASE_URL="https://.../v1"
++AI_MODEL="..."
++AI_API_KEY="..."
+ ```
+ 
+-Set the vision variables only when image uploads should work.
++The configured model must support images when image uploads should work.
+ 
+ ### Direct database connection vs. SQL proxy
+ 
+diff --git a/webchat-portable/src/lib/agent/vision.ts b/webchat-portable/src/lib/agent/vision.ts
+index d54174b..b6b1f36 100644
+--- a/webchat-portable/src/lib/agent/vision.ts
++++ b/webchat-portable/src/lib/agent/vision.ts
+@@ -1,3 +1,5 @@
++import { getAiConfig } from "@/lib/ai";
++
+ export async function convertVisualBytesToText(input: {
+   contentType: string;
+   base64: string;
+@@ -5,17 +7,7 @@ export async function convertVisualBytesToText(input: {
+   caption: string;
+ }) {
+   const { contentType, base64: mediaBase64, messageType, caption } = input;
+-  const apiKey = process.env.WHATSAPP_AGENT_VISION_API_KEY || "";
+-  if (!apiKey) {
+-    throw new Error("Vision API key is not set.");
+-  }
+-
+-  const baseUrl = (process.env.WHATSAPP_AGENT_VISION_BASE_URL || "https://api.apikey.fun/v1").replace(/\/$/, "");
+-  if (!baseUrl) {
+-    throw new Error("Vision API base URL is not set.");
+-  }
+-
+-  const model = process.env.WHATSAPP_AGENT_VISION_MODEL || "gpt-5.4-mini";
++  const ai = getAiConfig();
+   const promptText = [
+     `Convert this WhatsApp ${messageType} into plain text for a referral assistant.`,
+     "Look specifically for referral contact details in name cards, business cards, handwritten notes, forms, screenshots, posters, chat screenshots, and cropped photos.",
+@@ -33,14 +25,14 @@ export async function convertVisualBytesToText(input: {
+   const timeoutId = setTimeout(() => abortController.abort(), 60_000);
+ 
+   try {
+-    const response = await fetch(`${baseUrl}/chat/completions`, {
++    const response = await fetch(ai.chatCompletionsUrl, {
+       method: "POST",
+       headers: {
+-        Authorization: `Bearer ${apiKey}`,
++        Authorization: `Bearer ${ai.apiKey}`,
+         "Content-Type": "application/json",
+       },
+       body: JSON.stringify({
+-        model,
++        model: ai.model,
+         messages: [
+           {
+             role: "user",
+diff --git a/webchat-portable/src/lib/agent/whatsapp-flow-v2.ts b/webchat-portable/src/lib/agent/whatsapp-flow-v2.ts
+index 344f4d1..a6a9840 100644
+--- a/webchat-portable/src/lib/agent/whatsapp-flow-v2.ts
++++ b/webchat-portable/src/lib/agent/whatsapp-flow-v2.ts
+@@ -6,6 +6,7 @@
+  */
+ 
+ import { COMPANY_LEGAL_NAME, REFERRAL_TERMS } from "@/lib/terms";
++import { getAiConfig, getOpenAiChatCompletionsUrl } from "@/lib/ai";
+ import {
+   appendAgentDebugLog,
+   listWhatsappAgents,
+@@ -37,29 +38,13 @@ import {
+ } from "./whatsapp-history";
+ 
+ const PORTAL_URL = process.env.WHATSAPP_AGENT_PORTAL_URL || "https://referral.atap.solar/";
+-const LLM_BASE_URL = (process.env.WHATSAPP_AGENT_LLM_BASE_URL || "https://token-plan-sgp.xiaomimimo.com").replace(/\/$/, "");
+-const LLM_MODEL = process.env.WHATSAPP_AGENT_LLM_MODEL || "mimo-v2.5-pro";
+-const LLM_API_KEY = process.env.WHATSAPP_AGENT_LLM_API_KEY || process.env.MINIMAX_API_KEY || "";
++const AI = getAiConfig();
++const LLM_BASE_URL = AI.baseUrl;
++const LLM_MODEL = AI.model;
++const LLM_API_KEY = AI.apiKey;
+ 
+ function getLlmConfig(baseUrl: string): { format: "anthropic" | "openai"; endpoint: string } {
+-  const clean = baseUrl.replace(/\/$/, "");
+-  const lower = clean.toLowerCase();
+-
+-  if (lower.includes("xiaomimimo") || lower.includes("minimax") || lower.includes("anthropic") || lower.endsWith("/messages")) {
+-    let endpoint = clean;
+-    if (!endpoint.endsWith("/messages")) {
+-      if (endpoint.endsWith("/v1")) endpoint = `${endpoint}/messages`;
+-      else endpoint = `${endpoint}/anthropic/v1/messages`;
+-    }
+-    return { format: "anthropic", endpoint };
+-  }
+-
+-  let endpoint = clean;
+-  if (!endpoint.endsWith("/chat/completions")) {
+-    if (endpoint.endsWith("/v1")) endpoint = `${endpoint}/chat/completions`;
+-    else endpoint = `${endpoint}/v1/chat/completions`;
+-  }
+-  return { format: "openai", endpoint };
++  return { format: "openai", endpoint: getOpenAiChatCompletionsUrl(baseUrl) };
+ }
+ 
+ 
+@@ -164,7 +149,7 @@ export async function runWhatsappAgentTurnV2(input: {
+   const startedAt = Date.now();
+ 
+   if (!LLM_API_KEY) {
+-    throw new Error("WHATSAPP_AGENT_LLM_API_KEY (or MINIMAX_API_KEY) is not set.");
++    throw new Error("AI_API_KEY is not set.");
+   }
+ 
+   // Admin mode is a stateful session anyone can enter by sending "ee-admin"

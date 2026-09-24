@@ -1,0 +1,9 @@
+
+E:\EE - Referral\webchat-portable\src\lib\agent\whatsapp-flow-v2.ts
+  448:36  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  457:24  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  472:38  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  479:33  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+
+✖ 4 problems (4 errors, 0 warnings)
+
