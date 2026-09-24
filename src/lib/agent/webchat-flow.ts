@@ -77,8 +77,11 @@ export async function buildProfileForm(canonicalPhone: string): Promise<StepResu
       // boilerplate. Anyone who already has a real name keeps it prefilled,
       // whether or not their bank details are on file yet.
       name: referrer.name === REFERRAL_ACCOUNT_NAME ? "" : referrer.name,
+      bankName: referrer.bankName,
       bankAccount: referrer.bankAccount,
       icNumber: referrer.icNumber,
+      tin: referrer.tin,
+      address: referrer.address,
     },
   };
 

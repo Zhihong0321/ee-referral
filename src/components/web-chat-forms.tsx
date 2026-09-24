@@ -207,15 +207,18 @@ function AddLeadFormCard({ form, busy, onCancel, onSubmit }: FormCardProps & { f
 
 function ProfileFormCard({ form, busy, onCancel, onSubmit }: FormCardProps & { form: WebchatProfileForm }) {
   const [name, setName] = useState(form.values.name);
+  const [bankName, setBankName] = useState(form.values.bankName);
   const [bankAccount, setBankAccount] = useState(form.values.bankAccount);
   const [icNumber, setIcNumber] = useState(form.values.icNumber);
+  const [tin, setTin] = useState(form.values.tin);
+  const [address, setAddress] = useState(form.values.address);
   const [errors, setErrors] = useState<FieldErrors>({});
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
     if (busy) return;
 
-    const fields = { name, bankAccount, icNumber };
+    const fields = { name, bankName, bankAccount, icNumber, tin, address };
     const validated = validateProfileSubmission(fields);
 
     if (!validated.ok) {
@@ -254,6 +257,22 @@ function ProfileFormCard({ form, busy, onCancel, onSubmit }: FormCardProps & { f
       </div>
 
       <div>
+        <label className={LABEL_CLASS} htmlFor="profile-bank-name">
+          Bank · 银行名称
+        </label>
+        <input
+          id="profile-bank-name"
+          value={bankName}
+          onChange={(event) => setBankName(event.target.value)}
+          disabled={busy}
+          className={INPUT_CLASS}
+          placeholder="e.g. Maybank, Public Bank, CIMB"
+          autoComplete="off"
+        />
+        <FieldError message={errors.bankName} />
+      </div>
+
+      <div>
         <label className={LABEL_CLASS} htmlFor="profile-bank">
           Bank account · 银行账号
         </label>
@@ -263,7 +282,7 @@ function ProfileFormCard({ form, busy, onCancel, onSubmit }: FormCardProps & { f
           onChange={(event) => setBankAccount(event.target.value)}
           disabled={busy}
           className={INPUT_CLASS}
-          placeholder="Bank name and account number"
+          placeholder="Bank account number"
           autoComplete="off"
         />
         <FieldError message={errors.bankAccount} />
@@ -283,6 +302,39 @@ function ProfileFormCard({ form, busy, onCancel, onSubmit }: FormCardProps & { f
           autoComplete="off"
         />
         <FieldError message={errors.icNumber} />
+      </div>
+
+      <div>
+        <label className={LABEL_CLASS} htmlFor="profile-tin">
+          TIN · 个人税务识别码 (Personal Tax ID)
+        </label>
+        <input
+          id="profile-tin"
+          value={tin}
+          onChange={(event) => setTin(event.target.value)}
+          disabled={busy}
+          className={INPUT_CLASS}
+          placeholder="e.g. IG12345678010 or SG12345678010"
+          autoComplete="off"
+        />
+        <FieldError message={errors.tin} />
+      </div>
+
+      <div>
+        <label className={LABEL_CLASS} htmlFor="profile-address">
+          Address (same with MyKad) · 身份证地址
+        </label>
+        <textarea
+          id="profile-address"
+          value={address}
+          onChange={(event) => setAddress(event.target.value)}
+          disabled={busy}
+          rows={2}
+          className={`${INPUT_CLASS} resize-none`}
+          placeholder="Residential address as per MyKad"
+          autoComplete="street-address"
+        />
+        <FieldError message={errors.address} />
       </div>
 
       <div>

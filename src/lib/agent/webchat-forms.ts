@@ -26,7 +26,14 @@ export type WebchatAddLeadForm = {
 export type WebchatProfileForm = {
   kind: "profile";
   phone: string;
-  values: { name: string; bankAccount: string; icNumber: string };
+  values: {
+    name: string;
+    bankName: string;
+    bankAccount: string;
+    icNumber: string;
+    tin: string;
+    address: string;
+  };
 };
 
 export type WebchatForm = WebchatAddLeadForm | WebchatProfileForm;
@@ -41,8 +48,11 @@ export type AddLeadSubmission = {
 
 export type ProfileSubmission = {
   name: string;
+  bankName: string;
   bankAccount: string;
   icNumber: string;
+  tin: string;
+  address: string;
 };
 
 export type FieldErrors = Record<string, string>;
@@ -53,8 +63,11 @@ export const MAX_LEAD_NAME = 200;
 export const MAX_AREA = 200;
 export const MAX_REMARK = 500;
 export const MAX_REFERRER_NAME = 120;
+export const MAX_BANK_NAME = 100;
 export const MAX_BANK_ACCOUNT = 80;
 export const MAX_IC_NUMBER = 40;
+export const MAX_TIN = 40;
+export const MAX_ADDRESS = 300;
 
 export function isPlausibleMalaysiaMobile(canonicalPhone: string) {
   return /^60\d{9,11}$/.test(canonicalPhone);
@@ -125,6 +138,11 @@ export function validateProfileSubmission(
     errors.name = "Enter your name.";
   }
 
+  const bankName = text(input.bankName, MAX_BANK_NAME);
+  if (!bankName) {
+    errors.bankName = "Enter your bank name.";
+  }
+
   const bankAccount = text(input.bankAccount, MAX_BANK_ACCOUNT);
   if (!bankAccount) {
     errors.bankAccount = "Enter your bank account number.";
@@ -139,9 +157,19 @@ export function validateProfileSubmission(
     errors.icNumber = "That IC number looks too short.";
   }
 
+  const tin = text(input.tin, MAX_TIN);
+  if (!tin) {
+    errors.tin = "Enter your TIN (Personal Tax ID).";
+  }
+
+  const address = text(input.address, MAX_ADDRESS);
+  if (!address) {
+    errors.address = "Enter your address as per MyKad.";
+  }
+
   if (Object.keys(errors).length > 0) {
     return { ok: false, errors };
   }
 
-  return { ok: true, value: { name, bankAccount, icNumber } };
+  return { ok: true, value: { name, bankName, bankAccount, icNumber, tin, address } };
 }

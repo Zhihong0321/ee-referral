@@ -81,36 +81,63 @@ test("add lead: non-string fields are treated as empty, not coerced", () => {
   assert.ok(!result.ok && result.errors.leadName);
 });
 
-test("profile: all three fields are required", () => {
-  const result = validateProfileSubmission({ name: "", bankAccount: "", icNumber: "" });
+test("profile: all six fields are required", () => {
+  const result = validateProfileSubmission({
+    name: "",
+    bankName: "",
+    bankAccount: "",
+    icNumber: "",
+    tin: "",
+    address: "",
+  });
   assert.equal(result.ok, false);
   assert.deepEqual(
     !result.ok && Object.keys(result.errors).sort(),
-    ["bankAccount", "icNumber", "name"],
+    ["address", "bankAccount", "bankName", "icNumber", "name", "tin"],
   );
 });
 
 test("profile: a complete form trims each value", () => {
   const result = validateProfileSubmission({
     name: "  Siti  ",
-    bankAccount: " Maybank 1234567890 ",
+    bankName: " Maybank ",
+    bankAccount: " 1234567890 ",
     icNumber: " 900101-14-5678 ",
+    tin: " IG12345678010 ",
+    address: " No 123, Jalan Solar, 47000 Selangor ",
   });
   assert.equal(result.ok, true);
   assert.deepEqual(result.ok && result.value, {
     name: "Siti",
-    bankAccount: "Maybank 1234567890",
+    bankName: "Maybank",
+    bankAccount: "1234567890",
     icNumber: "900101-14-5678",
+    tin: "IG12345678010",
+    address: "No 123, Jalan Solar, 47000 Selangor",
   });
 });
 
 test("profile: an IC with too few alphanumerics is rejected, separators do not count", () => {
-  const tooShort = validateProfileSubmission({ name: "Siti", bankAccount: "123", icNumber: "12-34" });
+  const tooShort = validateProfileSubmission({
+    name: "Siti",
+    bankName: "Maybank",
+    bankAccount: "123",
+    icNumber: "12-34",
+    tin: "IG12345678010",
+    address: "No 123, Jalan Solar",
+  });
   assert.equal(tooShort.ok, false);
   assert.match((!tooShort.ok && tooShort.errors.icNumber) || "", /too short/);
 
   // A passport number is a valid IC value here — the check is deliberately loose.
-  const passport = validateProfileSubmission({ name: "Siti", bankAccount: "123", icNumber: "A1234567" });
+  const passport = validateProfileSubmission({
+    name: "Siti",
+    bankName: "Maybank",
+    bankAccount: "123",
+    icNumber: "A1234567",
+    tin: "IG12345678010",
+    address: "No 123, Jalan Solar",
+  });
   assert.equal(passport.ok, true);
 });
 

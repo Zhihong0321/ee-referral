@@ -101,7 +101,10 @@ export type WhatsappReferrerAccount = {
   name: string;
   phone: string;
   bankAccount: string;
+  bankName: string;
   icNumber: string;
+  tin: string;
+  address: string;
   // true once the referrer has a real name AND a payout bank account on file.
   registered: boolean;
 };
@@ -122,6 +125,11 @@ type ReferrerRow = {
   customer_id: string;
   name: string | null;
   phone: string | null;
+  address?: string | null;
+  ic_number?: string | null;
+  tin?: string | null;
+  bank_name?: string | null;
+  bank_account?: string | null;
   notes: string | null;
   match_rank: number;
   match_index: number;
@@ -648,6 +656,11 @@ export async function resolveOrCreateReferrerByWhatsappPhone(senderPhone: string
             c.customer_id,
             c.name,
             c.phone,
+            c.address,
+            c.ic_number,
+            c.tin,
+            c.bank_name,
+            c.bank_account,
             c.notes,
             lower(COALESCE(NULLIF(c.name, ''), $4)) = lower($4) AS is_generic_name
           FROM customer c
@@ -690,7 +703,7 @@ export async function resolveOrCreateReferrerByWhatsappPhone(senderPhone: string
         updated_by
       )
       VALUES ($1, $2, $3, 'other', $4, $5, $6, $6)
-      RETURNING customer_id, name, phone, notes, 0 AS match_rank, 0 AS match_index, true AS is_generic_name
+      RETURNING customer_id, name, phone, address, ic_number, tin, bank_name, bank_account, notes, 0 AS match_rank, 0 AS match_index, true AS is_generic_name
     `,
     [generatedCustomerId, REFERRAL_ACCOUNT_NAME, canonicalPhone, REFERRAL_MARKER, notes, APP_ACTOR],
   );
@@ -700,8 +713,25 @@ export async function resolveOrCreateReferrerByWhatsappPhone(senderPhone: string
 
 function buildReferrerAccount(row: ReferrerRow, fallbackPhone: string): WhatsappReferrerAccount {
   const notes = parseNotes(row.notes);
-  const bankAccount = typeof notes.bankAccount === "string" ? notes.bankAccount.trim() : "";
-  const icNumber = typeof notes.icNumber === "string" ? notes.icNumber.trim() : "";
+  const bankAccount =
+    row.bank_account?.trim() ||
+    (typeof notes.bankAccount === "string" ? notes.bankAccount.trim() : "");
+  const bankName =
+    row.bank_name?.trim() ||
+    (typeof notes.bankName === "string"
+      ? notes.bankName.trim()
+      : typeof notes.bankerName === "string"
+        ? notes.bankerName.trim()
+        : "");
+  const icNumber =
+    row.ic_number?.trim() ||
+    (typeof notes.icNumber === "string" ? notes.icNumber.trim() : "");
+  const tin =
+    row.tin?.trim() ||
+    (typeof notes.tin === "string" ? notes.tin.trim() : "");
+  const address =
+    row.address?.trim() ||
+    (typeof notes.address === "string" ? notes.address.trim() : "");
   const trimmedName = row.name?.trim() || "";
   const hasRealName = Boolean(trimmedName) && !row.is_generic_name;
 
@@ -710,31 +740,47 @@ function buildReferrerAccount(row: ReferrerRow, fallbackPhone: string): Whatsapp
     name: trimmedName || REFERRAL_ACCOUNT_NAME,
     phone: row.phone?.trim() || fallbackPhone,
     bankAccount,
+    bankName,
     icNumber,
+    tin,
+    address,
     registered: hasRealName && Boolean(bankAccount),
   };
 }
 
 // Persist a referrer's name + payout bank account (collected during WhatsApp
 // onboarding). Matches how the dashboard portal stores the profile: name in
-// customer.name, bank details merged into customer.notes JSON.
+// customer.name, bank details merged into customer.notes JSON and dedicated columns.
 export async function saveReferrerProfile(
   referrer: WhatsappReferrerAccount,
-  input: { name: string; bankAccount: string; bankerName?: string; icNumber?: string },
+  input: {
+    name: string;
+    bankAccount: string;
+    bankName?: string;
+    bankerName?: string;
+    icNumber?: string;
+    tin?: string;
+    address?: string;
+  },
 ) {
   const existingRows = await runWhatsappAgentSql<{ notes: string | null }>(
     `SELECT notes FROM customer WHERE customer_id = $1 LIMIT 1`,
     [referrer.customerId],
   );
+  const resolvedBankName = input.bankName?.trim() || input.bankerName?.trim() || "";
+  const icNumber = input.icNumber !== undefined ? input.icNumber.trim() : referrer.icNumber;
+  const tin = input.tin !== undefined ? input.tin.trim() : referrer.tin;
+  const address = input.address !== undefined ? input.address.trim() : referrer.address;
+
   const mergedNotes = {
     ...parseNotes(existingRows[0]?.notes ?? null),
     kind: "referral_account",
     bankAccount: input.bankAccount,
-    bankerName: input.bankerName?.trim() || input.name,
-    // The REFERRER's own IC, not a lead's — this row is the referral account
-    // (customer.remark = REFERRAL_MARKER), not a customer profile. The table has
-    // no IC column, so it sits beside the referrer's bank details in notes JSON.
-    ...(input.icNumber === undefined ? {} : { icNumber: input.icNumber.trim() }),
+    bankName: resolvedBankName || undefined,
+    bankerName: resolvedBankName || input.bankerName?.trim() || input.name,
+    icNumber: icNumber || undefined,
+    tin: tin || undefined,
+    address: address || undefined,
     updatedAt: new Date().toISOString(),
   };
 
@@ -742,20 +788,39 @@ export async function saveReferrerProfile(
     `
       UPDATE customer
       SET name = $1,
-          notes = $2,
-          remark = $3,
-          updated_by = $4,
+          bank_name = $2,
+          bank_account = $3,
+          ic_number = $4,
+          tin = $5,
+          address = $6,
+          notes = $7,
+          remark = $8,
+          updated_by = $9,
           updated_at = NOW()
-      WHERE customer_id = $5
+      WHERE customer_id = $10
     `,
-    [input.name, JSON.stringify(mergedNotes), REFERRAL_MARKER, APP_ACTOR, referrer.customerId],
+    [
+      input.name,
+      resolvedBankName || null,
+      input.bankAccount || null,
+      icNumber || null,
+      tin || null,
+      address || null,
+      JSON.stringify(mergedNotes),
+      REFERRAL_MARKER,
+      APP_ACTOR,
+      referrer.customerId,
+    ],
   );
 
   return {
     ...referrer,
     name: input.name,
     bankAccount: input.bankAccount,
-    icNumber: input.icNumber?.trim() ?? referrer.icNumber,
+    bankName: resolvedBankName || referrer.bankName,
+    icNumber,
+    tin,
+    address,
     registered: true,
   };
 }
@@ -770,6 +835,11 @@ export async function searchReferrerByPhone(phone: string): Promise<WhatsappRefe
         c.customer_id,
         c.name,
         c.phone,
+        c.address,
+        c.ic_number,
+        c.tin,
+        c.bank_name,
+        c.bank_account,
         c.notes,
         lower(COALESCE(NULLIF(c.name, ''), $4)) = lower($4) AS is_generic_name
       FROM customer c
@@ -854,7 +924,7 @@ export async function createReferrerOnBehalf(input: {
         updated_by
       )
       VALUES ($1, $2, $3, 'other', $4, $5, $6, $6)
-      RETURNING customer_id, name, phone, notes, 0 AS match_rank, 0 AS match_index, false AS is_generic_name
+      RETURNING customer_id, name, phone, address, ic_number, tin, bank_name, bank_account, notes, 0 AS match_rank, 0 AS match_index, false AS is_generic_name
     `,
     [generatedCustomerId, input.name.trim(), canonicalPhone, REFERRAL_MARKER, notes, APP_ACTOR],
   );

@@ -31,8 +31,11 @@ const requestSchema = z.discriminatedUnion("kind", [
     kind: z.literal("profile"),
     phone: z.string().trim().min(1).max(30),
     name: z.string().max(300).default(""),
+    bankName: z.string().max(200).default(""),
     bankAccount: z.string().max(200).default(""),
     icNumber: z.string().max(100).default(""),
+    tin: z.string().max(100).default(""),
+    address: z.string().max(500).default(""),
   }),
 ]);
 
@@ -139,15 +142,21 @@ export async function POST(request: Request) {
     const referrer = await resolveOrCreateReferrerByWhatsappPhone(canonicalPhone);
     await saveReferrerProfile(referrer, {
       name: profile.name,
+      bankName: profile.bankName,
       bankAccount: profile.bankAccount,
       icNumber: profile.icNumber,
+      tin: profile.tin,
+      address: profile.address,
     });
 
     const summary = [
       "Submitted the My Details form.",
       `Name: ${profile.name}`,
+      `Bank: ${profile.bankName}`,
       `Bank account: ${maskSensitive(profile.bankAccount)}`,
       `IC number: ${maskSensitive(profile.icNumber)}`,
+      `TIN: ${maskSensitive(profile.tin)}`,
+      `Address: ${profile.address}`,
     ].join("\n");
     const reply = `Your details are saved, ${profile.name}.\n\n${MENU_TEXT}`;
 
