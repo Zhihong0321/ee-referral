@@ -155,7 +155,7 @@ function DashboardShell({
           <div className="flex flex-col items-start gap-2 sm:items-end">
             {headerActions}
             <Link href="/dashboard?userAssist=1" className="text-sm font-semibold text-violet-700 hover:text-violet-800">
-              Help Other to Add Lead
+              Help Other to Add Lead (Potential Contact)
             </Link>
             <span className="pill">Commission: {REFERRAL_FEE_RULE_SUMMARY}</span>
             <Link href="/terms" className="text-sm font-semibold text-slate-700 hover:text-slate-900">
@@ -178,7 +178,7 @@ async function renderUserAssistDashboard() {
     <DashboardShell
       badge="User-Assist Dashboard"
       title="Referral Account Support"
-      subtitle="Select or create a referral account to help manage their leads."
+      subtitle="Select or create a referral account to help manage their leads (potential contacts)."
     >
       <section className="hero-reveal hero-delay mt-6 rounded-2xl border border-slate-200 bg-white p-6 sm:p-8">
         <h2 className="text-xl font-semibold text-slate-900">Manage Referral Account</h2>
@@ -273,8 +273,8 @@ async function renderManagerDashboard(params: Awaited<DashboardPageProps["search
   return (
     <DashboardShell
       badge="Manager Queue"
-      title={`Referral Leads, ${managerName}`}
-      subtitle="Review all incoming referrals, filter the queue, and assign or reassign leads to internal agents."
+      title={`Referral Leads (Potential Contacts), ${managerName}`}
+      subtitle="Review all incoming referrals, filter the queue, and assign or reassign leads (potential contacts) to internal agents."
       headerActions={
         <Link href="/referral-overview" className="text-sm font-semibold text-teal-700 hover:text-teal-800">
           Referral Overview
@@ -286,8 +286,8 @@ async function renderManagerDashboard(params: Awaited<DashboardPageProps["search
       <section className="hero-reveal hero-delay mt-6 rounded-2xl border border-slate-200 bg-white p-6 sm:p-8">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h2 className="text-xl font-semibold text-slate-900">Filter Leads</h2>
-            <p className="mt-1 text-sm text-slate-600">Search by lead name or mobile number and refine by assignment or agent.</p>
+            <h2 className="text-xl font-semibold text-slate-900">Filter Leads (Potential Contacts)</h2>
+            <p className="mt-1 text-sm text-slate-600">Search by lead (potential contact) name or mobile number and refine by assignment or agent.</p>
           </div>
           <Link href="/dashboard" className="text-sm font-semibold text-teal-700 hover:text-teal-800">
             Reset filters
@@ -302,7 +302,7 @@ async function renderManagerDashboard(params: Awaited<DashboardPageProps["search
               name="search"
               defaultValue={filters.search}
               className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 outline-none ring-amber-500 focus:ring"
-              placeholder="Lead name or mobile number"
+              placeholder="Lead (potential contact) name or mobile number"
             />
           </label>
 
@@ -313,7 +313,7 @@ async function renderManagerDashboard(params: Awaited<DashboardPageProps["search
               defaultValue={filters.assignment}
               className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 outline-none ring-amber-500 focus:ring"
             >
-              <option value="">All leads</option>
+              <option value="">All leads (potential contacts)</option>
               <option value="unassigned">Unassigned only</option>
               <option value="assigned">Assigned only</option>
             </select>
@@ -363,12 +363,12 @@ async function renderManagerDashboard(params: Awaited<DashboardPageProps["search
 
       <section className="hero-reveal hero-delay-2 mt-6 rounded-2xl border border-slate-200 bg-white p-6 sm:p-8">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <h2 className="text-xl font-semibold text-slate-900">Lead Queue</h2>
-          <span className="pill">Visible leads: {referrals.length}</span>
+          <h2 className="text-xl font-semibold text-slate-900">Lead (Potential Contact) Queue</h2>
+          <span className="pill">Visible leads (potential contacts): {referrals.length}</span>
         </div>
 
         {referrals.length === 0 ? (
-          <p className="mt-4 text-sm text-slate-600">No leads matched the current filters.</p>
+          <p className="mt-4 text-sm text-slate-600">No leads (potential contacts) matched the current filters.</p>
         ) : (
           <div className="mt-5 grid gap-4">
             {referrals.map((referral) => (
@@ -379,7 +379,7 @@ async function renderManagerDashboard(params: Awaited<DashboardPageProps["search
                     <p className="text-sm text-slate-600">
                       {referral.leadMobile || "-"} | {referral.relationship || "-"} | {referral.projectType || "Not set"}
                     </p>
-                    <p className="text-sm text-slate-600">Referrer: {referral.referrerCustomerName || referral.referrerCustomerId}</p>
+                    <p className="text-sm text-slate-600">Referrer (Introducer): {referral.referrerCustomerName || referral.referrerCustomerId}</p>
                     <p className="text-sm text-slate-600">
                       Location: {formatLocation(referral.leadState, referral.leadCity, referral.leadAddress)}
                     </p>
@@ -401,7 +401,7 @@ async function renderManagerDashboard(params: Awaited<DashboardPageProps["search
                     defaultAgentId={referral.assignedAgentId}
                     inputName="assignedAgentId"
                     label="Assign agent"
-                    helperText="Leave blank to keep this lead unassigned."
+                    helperText="Leave blank to keep this lead (potential contact) unassigned."
                   />
                   <label className="text-sm text-slate-700">
                     Status
@@ -444,20 +444,20 @@ async function renderAgentDashboard(
 
   return (
     <DashboardShell
-      badge="Assigned Leads"
-      title={`Your Referral Leads, ${agentName}`}
-      subtitle="This view only shows referral leads assigned to you by management."
+      badge="Assigned Leads (Potential Contacts)"
+      title={`Your Referral Leads (Potential Contacts), ${agentName}`}
+      subtitle="This view only shows referral leads (potential contacts) assigned to you by management."
     >
       <FlashMessages success={params.success} error={params.error} />
 
       <section className="hero-reveal hero-delay mt-6 rounded-2xl border border-slate-200 bg-white p-6 sm:p-8">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <h2 className="text-xl font-semibold text-slate-900">Assigned Queue</h2>
-          <span className="pill">Your leads: {referrals.length}</span>
+          <span className="pill">Your leads (potential contacts): {referrals.length}</span>
         </div>
 
         {referrals.length === 0 ? (
-          <p className="mt-4 text-sm text-slate-600">No referral leads are assigned to you yet.</p>
+          <p className="mt-4 text-sm text-slate-600">No referral leads (potential contacts) are assigned to you yet.</p>
         ) : (
           <div className="mt-5 grid gap-4">
             {referrals.map((referral) => (
@@ -468,7 +468,7 @@ async function renderAgentDashboard(
                     <p className="text-sm text-slate-600">
                       {referral.leadMobile || "-"} | {referral.relationship || "-"} | {referral.projectType || "Not set"}
                     </p>
-                    <p className="text-sm text-slate-600">Referrer: {referral.referrerCustomerName || referral.referrerCustomerId}</p>
+                    <p className="text-sm text-slate-600">Referrer (Introducer): {referral.referrerCustomerName || referral.referrerCustomerId}</p>
                     <p className="text-sm text-slate-600">
                       Location: {formatLocation(referral.leadState, referral.leadCity, referral.leadAddress)}
                     </p>
@@ -495,6 +495,7 @@ async function renderReferrerDashboard(
 ) {
   let referralId = "";
   let referralName = authUser.name?.trim() || authUser.phone;
+  let email = "";
   let profilePicture = "";
   let bankAccount = "";
   let bankerName = "";
@@ -506,6 +507,7 @@ async function renderReferrerDashboard(
     const referralAccount = await findOrCreateReferrerAccount(authUser);
     referralId = referralAccount.customerId;
     referralName = referralAccount.name?.trim() || referralName;
+    email = referralAccount.email || "";
     profilePicture = referralAccount.profilePicture || "";
     bankAccount = referralAccount.bankAccount || "";
     bankerName = referralAccount.bankerName || "";
@@ -596,6 +598,19 @@ async function renderReferrerDashboard(
               </label>
 
               <label className="text-sm text-slate-700">
+                Email
+                <input
+                  type="email"
+                  name="email"
+                  defaultValue={email}
+                  required
+                  autoComplete="email"
+                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 outline-none ring-amber-500 focus:ring"
+                  placeholder="you@example.com"
+                />
+              </label>
+
+              <label className="text-sm text-slate-700">
                 Banking account
                 <input
                   type="text"
@@ -638,9 +653,9 @@ async function renderReferrerDashboard(
           </section>
 
           <section className="hero-reveal hero-delay mt-6 rounded-2xl border border-slate-200 bg-white p-6 sm:p-8">
-            <h2 className="text-xl font-semibold text-slate-900">Add Referral Lead</h2>
+            <h2 className="text-xl font-semibold text-slate-900">Add Referral Lead (Potential Contact)</h2>
             <p className="mt-2 text-sm text-slate-600">
-              Enter the lead details, location, relationship, project type, and your preferred handling agent.
+              Enter the lead (potential contact) details, location, relationship, project type, and your preferred handling agent.
             </p>
 
             <form action={addReferralAction} className="mt-5 grid gap-4 md:grid-cols-2">
@@ -652,7 +667,7 @@ async function renderReferrerDashboard(
                 </>
               )}
               <label className="text-sm text-slate-700">
-                Lead name
+                Lead (potential contact) name
                 <input
                   type="text"
                   name="leadName"
@@ -663,7 +678,7 @@ async function renderReferrerDashboard(
               </label>
 
               <label className="text-sm text-slate-700">
-                Lead mobile number
+                Lead (potential contact) mobile number
                 <input
                   type="text"
                   name="leadMobileNumber"
@@ -705,7 +720,7 @@ async function renderReferrerDashboard(
               </label>
 
               <label className="text-sm text-slate-700">
-                Relationship with lead
+                Relationship with lead (potential contact)
                 <select
                   name="relationship"
                   required
@@ -744,7 +759,7 @@ async function renderReferrerDashboard(
                   name="remark"
                   rows={3}
                   className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 outline-none ring-amber-500 focus:ring resize-none"
-                  placeholder="Optional notes or remarks about this lead"
+                  placeholder="Optional notes or remarks about this lead (potential contact)"
                 />
               </label>
 
@@ -809,7 +824,7 @@ async function renderReferrerDashboard(
                         <input type="hidden" name="referralId" value={referral.id} />
 
                         <label className="text-sm text-slate-700">
-                          Lead name
+                          Lead (potential contact) name
                           <input
                             type="text"
                             name="leadName"
@@ -820,7 +835,7 @@ async function renderReferrerDashboard(
                         </label>
 
                         <label className="text-sm text-slate-700">
-                          Lead mobile number
+                          Lead (potential contact) mobile number
                           <input
                             type="text"
                             name="leadMobileNumber"

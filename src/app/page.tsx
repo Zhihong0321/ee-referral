@@ -10,12 +10,12 @@ const STEPS = [
       "You log in once through Auth Hub at auth.atap.solar. Your secure auth cookie returns you to the referral dashboard.",
   },
   {
-    title: "2. Submit A Lead",
+    title: "2. Submit A Lead (Potential Contact)",
     description:
-      "Submit the lead name, mobile number, location details, relationship, and your preferred handling agent.",
+      "Submit the lead (potential contact) name, mobile number, location details, relationship, and your preferred handling agent.",
   },
   {
-    title: "3. Track Lead Status",
+    title: "3. Track Lead (Potential Contact) Status",
     description:
       "You can monitor each referral from pending through qualification, while management handles assignment internally.",
   },
@@ -37,7 +37,7 @@ export default function Home() {
         </h1>
         <BonusCountdown />
         <p className="hero-reveal hero-delay mt-4 max-w-2xl text-base leading-7 text-slate-700 sm:text-lg">
-          Bring us qualified leads and we reward you with up to {REFERRAL_FEE_RATE} commission. {REFERRAL_FEE_RULE_SUMMARY}{" "}
+          Bring us qualified leads (potential contacts) and we reward you with up to {REFERRAL_FEE_RATE} commission. {REFERRAL_FEE_RULE_SUMMARY}{" "}
           {REFERRAL_PAYOUT_RULE} Start by signing in with your WhatsApp account, then submit and manage referrals from
           one dashboard.
         </p>
@@ -60,6 +60,12 @@ export default function Home() {
             className="inline-flex items-center justify-center rounded-xl border border-slate-300 bg-white px-6 py-3 text-sm font-semibold text-slate-800 transition hover:border-slate-400"
           >
             Chat With Referral Assistant
+          </Link>
+          <Link
+            href="/guide"
+            className="inline-flex items-center justify-center rounded-xl border border-slate-300 bg-white px-6 py-3 text-sm font-semibold text-slate-800 transition hover:border-slate-400"
+          >
+            Referral Assistant Guide
           </Link>
           <Link
             href="/terms"
@@ -90,8 +96,11 @@ export default function Home() {
           <li>Commission rate: {REFERRAL_FEE_RULE_SUMMARY}</li>
           <li>Payout timing: {REFERRAL_PAYOUT_RULE}</li>
           <li>WhatsApp sign-in is mandatory before creating a referral account.</li>
-          <li>Lead location can include state, city, and address details.</li>
-          <li>The dashboard supports profile updates, adding referrals, and editing your own lead details.</li>
+          <li>Lead (potential contact) location can include state, city, and address details.</li>
+          <li>
+            The dashboard supports profile updates, adding referrals, and editing your own lead (potential contact)
+            details.
+          </li>
         </ul>
       </section>
 

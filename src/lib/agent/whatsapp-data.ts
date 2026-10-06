@@ -100,6 +100,7 @@ export type WhatsappReferrerAccount = {
   customerId: string;
   name: string;
   phone: string;
+  email: string;
   bankAccount: string;
   bankName: string;
   icNumber: string;
@@ -125,6 +126,7 @@ type ReferrerRow = {
   customer_id: string;
   name: string | null;
   phone: string | null;
+  email: string | null;
   address?: string | null;
   ic_number?: string | null;
   tin?: string | null;
@@ -656,6 +658,7 @@ export async function resolveOrCreateReferrerByWhatsappPhone(senderPhone: string
             c.customer_id,
             c.name,
             c.phone,
+            c.email,
             c.address,
             c.ic_number,
             c.tin,
@@ -703,7 +706,7 @@ export async function resolveOrCreateReferrerByWhatsappPhone(senderPhone: string
         updated_by
       )
       VALUES ($1, $2, $3, 'other', $4, $5, $6, $6)
-      RETURNING customer_id, name, phone, address, ic_number, tin, bank_name, bank_account, notes, 0 AS match_rank, 0 AS match_index, true AS is_generic_name
+      RETURNING customer_id, name, phone, email, address, ic_number, tin, bank_name, bank_account, notes, 0 AS match_rank, 0 AS match_index, true AS is_generic_name
     `,
     [generatedCustomerId, REFERRAL_ACCOUNT_NAME, canonicalPhone, REFERRAL_MARKER, notes, APP_ACTOR],
   );
@@ -736,10 +739,11 @@ function buildReferrerAccount(row: ReferrerRow, fallbackPhone: string): Whatsapp
   const hasRealName = Boolean(trimmedName) && !row.is_generic_name;
 
   return {
-    customerId: row.customer_id,
-    name: trimmedName || REFERRAL_ACCOUNT_NAME,
-    phone: row.phone?.trim() || fallbackPhone,
-    bankAccount,
+      customerId: row.customer_id,
+      name: trimmedName || REFERRAL_ACCOUNT_NAME,
+      phone: row.phone?.trim() || fallbackPhone,
+      email: row.email?.trim() || "",
+      bankAccount,
     bankName,
     icNumber,
     tin,
@@ -755,6 +759,7 @@ export async function saveReferrerProfile(
   referrer: WhatsappReferrerAccount,
   input: {
     name: string;
+    email: string;
     bankAccount: string;
     bankName?: string;
     bankerName?: string;
@@ -788,19 +793,21 @@ export async function saveReferrerProfile(
     `
       UPDATE customer
       SET name = $1,
-          bank_name = $2,
-          bank_account = $3,
-          ic_number = $4,
-          tin = $5,
-          address = $6,
-          notes = $7,
-          remark = $8,
-          updated_by = $9,
+          email = $2,
+          bank_name = $3,
+          bank_account = $4,
+          ic_number = $5,
+          tin = $6,
+          address = $7,
+          notes = $8,
+          remark = $9,
+          updated_by = $10,
           updated_at = NOW()
-      WHERE customer_id = $10
+      WHERE customer_id = $11
     `,
     [
       input.name,
+      input.email.trim(),
       resolvedBankName || null,
       input.bankAccount || null,
       icNumber || null,
@@ -816,6 +823,7 @@ export async function saveReferrerProfile(
   return {
     ...referrer,
     name: input.name,
+    email: input.email.trim(),
     bankAccount: input.bankAccount,
     bankName: resolvedBankName || referrer.bankName,
     icNumber,
@@ -835,6 +843,7 @@ export async function searchReferrerByPhone(phone: string): Promise<WhatsappRefe
         c.customer_id,
         c.name,
         c.phone,
+        c.email,
         c.address,
         c.ic_number,
         c.tin,
@@ -924,7 +933,7 @@ export async function createReferrerOnBehalf(input: {
         updated_by
       )
       VALUES ($1, $2, $3, 'other', $4, $5, $6, $6)
-      RETURNING customer_id, name, phone, address, ic_number, tin, bank_name, bank_account, notes, 0 AS match_rank, 0 AS match_index, false AS is_generic_name
+      RETURNING customer_id, name, phone, email, address, ic_number, tin, bank_name, bank_account, notes, 0 AS match_rank, 0 AS match_index, false AS is_generic_name
     `,
     [generatedCustomerId, input.name.trim(), canonicalPhone, REFERRAL_MARKER, notes, APP_ACTOR],
   );
@@ -1254,7 +1263,7 @@ export async function updateWhatsappReferral(
   const existing = rows[0];
 
   if (!existing) {
-    throw new Error("Lead not found under this WhatsApp referrer account.");
+    throw new Error("Lead (potential contact) not found under this WhatsApp referrer (introducer) account.");
   }
 
   if (mapping.referralColumn) {

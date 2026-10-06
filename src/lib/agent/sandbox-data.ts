@@ -20,6 +20,7 @@ type ProxyReferrerRow = {
   customer_id: string;
   name: string | null;
   phone: string | null;
+  email: string | null;
   profile_picture: string | null;
   notes: string | null;
   remark: string | null;
@@ -90,6 +91,7 @@ function buildReferrerAccount(row: ProxyReferrerRow, fallbackPhone: string): Ref
     customerId: row.customer_id,
     name: row.name?.trim() || REFERRAL_ACCOUNT_NAME,
     phone: row.phone?.trim() || fallbackPhone,
+    email: row.email?.trim() || "",
     profilePicture: row.profile_picture,
     bankAccount: typeof noteData.bankAccount === "string" ? noteData.bankAccount : "",
     bankerName: typeof noteData.bankerName === "string" ? noteData.bankerName : "",
@@ -185,7 +187,7 @@ export async function getSandboxReferrerByPhone(phoneInput: string): Promise<Ref
 
   const rows = await runProxySql<ProxyReferrerRow>(
     `
-      SELECT customer_id, name, phone, profile_picture, notes, remark
+      SELECT customer_id, name, phone, email, profile_picture, notes, remark
       FROM customer
       WHERE phone = $1
         AND remark IN ($2, $3)
@@ -229,7 +231,7 @@ export async function ensureSandboxReferrerByPhone(phoneInput: string): Promise<
   const rows = await runProxySql<ProxyReferrerRow>(
     `
       WITH existing AS (
-        SELECT customer_id, name, phone, profile_picture, notes, remark
+        SELECT customer_id, name, phone, email, profile_picture, notes, remark
         FROM customer
         WHERE phone = $1
           AND remark IN ($2, $3)
@@ -249,11 +251,11 @@ export async function ensureSandboxReferrerByPhone(phoneInput: string): Promise<
         )
         SELECT $4, $5, $1, 'other', $2, $6, $7, $7
         WHERE NOT EXISTS (SELECT 1 FROM existing)
-        RETURNING customer_id, name, phone, profile_picture, notes, remark
+        RETURNING customer_id, name, phone, email, profile_picture, notes, remark
       )
-      SELECT customer_id, name, phone, profile_picture, notes, remark FROM existing
+      SELECT customer_id, name, phone, email, profile_picture, notes, remark FROM existing
       UNION ALL
-      SELECT customer_id, name, phone, profile_picture, notes, remark FROM inserted
+      SELECT customer_id, name, phone, email, profile_picture, notes, remark FROM inserted
       LIMIT 1
     `,
     [phone, REFERRAL_MARKER, LEGACY_REFERRER_MARKER, generatedCustomerId, REFERRAL_ACCOUNT_NAME, notes, APP_ACTOR],

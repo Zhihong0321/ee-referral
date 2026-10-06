@@ -31,6 +31,7 @@ const requestSchema = z.discriminatedUnion("kind", [
     kind: z.literal("profile"),
     phone: z.string().trim().min(1).max(30),
     name: z.string().max(300).default(""),
+    email: z.string().max(254).default(""),
     bankName: z.string().max(200).default(""),
     bankAccount: z.string().max(200).default(""),
     icNumber: z.string().max(100).default(""),
@@ -114,8 +115,8 @@ export async function POST(request: Request) {
 
       const agentName = agents.find((agent) => agent.id === lead.preferredAgentId)?.name || "";
       const summary = [
-        "Submitted the Add Lead form.",
-        `Lead: ${lead.leadName} — ${lead.leadMobileNumber}`,
+        "Submitted the Add Lead (Potential Contact) form.",
+        `Lead (potential contact): ${lead.leadName} — ${lead.leadMobileNumber}`,
         lead.area ? `Area: ${lead.area}` : "",
         `Assigned agent: ${agentName || "(none)"}`,
         lead.remark ? `Remarks: ${lead.remark}` : "",
@@ -123,7 +124,7 @@ export async function POST(request: Request) {
         .filter(Boolean)
         .join("\n");
 
-      const reply = `Lead saved (#${referralId}) — ${lead.leadName}, ${lead.leadMobileNumber}${
+      const reply = `Lead (potential contact) saved (#${referralId}) —${lead.leadName}, ${lead.leadMobileNumber}${
         agentName ? `, assigned to ${agentName}` : ""
       }.\n\n${MENU_TEXT}`;
 
@@ -142,6 +143,7 @@ export async function POST(request: Request) {
     const referrer = await resolveOrCreateReferrerByWhatsappPhone(canonicalPhone);
     await saveReferrerProfile(referrer, {
       name: profile.name,
+      email: profile.email,
       bankName: profile.bankName,
       bankAccount: profile.bankAccount,
       icNumber: profile.icNumber,
@@ -152,6 +154,7 @@ export async function POST(request: Request) {
     const summary = [
       "Submitted the My Details form.",
       `Name: ${profile.name}`,
+      "Email: saved",
       `Bank: ${profile.bankName}`,
       `Bank account: ${maskSensitive(profile.bankAccount)}`,
       `IC number: ${maskSensitive(profile.icNumber)}`,

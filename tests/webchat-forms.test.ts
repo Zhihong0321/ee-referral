@@ -81,9 +81,10 @@ test("add lead: non-string fields are treated as empty, not coerced", () => {
   assert.ok(!result.ok && result.errors.leadName);
 });
 
-test("profile: all six fields are required", () => {
+test("profile: all seven fields are required", () => {
   const result = validateProfileSubmission({
     name: "",
+    email: "",
     bankName: "",
     bankAccount: "",
     icNumber: "",
@@ -93,13 +94,14 @@ test("profile: all six fields are required", () => {
   assert.equal(result.ok, false);
   assert.deepEqual(
     !result.ok && Object.keys(result.errors).sort(),
-    ["address", "bankAccount", "bankName", "icNumber", "name", "tin"],
+    ["address", "bankAccount", "bankName", "email", "icNumber", "name", "tin"],
   );
 });
 
 test("profile: a complete form trims each value", () => {
   const result = validateProfileSubmission({
     name: "  Siti  ",
+    email: " siti@example.com ",
     bankName: " Maybank ",
     bankAccount: " 1234567890 ",
     icNumber: " 900101-14-5678 ",
@@ -109,6 +111,7 @@ test("profile: a complete form trims each value", () => {
   assert.equal(result.ok, true);
   assert.deepEqual(result.ok && result.value, {
     name: "Siti",
+    email: "siti@example.com",
     bankName: "Maybank",
     bankAccount: "1234567890",
     icNumber: "900101-14-5678",
@@ -117,9 +120,24 @@ test("profile: a complete form trims each value", () => {
   });
 });
 
+test("profile: malformed email is rejected", () => {
+  const result = validateProfileSubmission({
+    name: "Siti",
+    email: "not-an-email",
+    bankName: "Maybank",
+    bankAccount: "123",
+    icNumber: "A1234567",
+    tin: "IG12345678010",
+    address: "No 123, Jalan Solar",
+  });
+  assert.equal(result.ok, false);
+  assert.match((!result.ok && result.errors.email) || "", /valid email/);
+});
+
 test("profile: an IC with too few alphanumerics is rejected, separators do not count", () => {
   const tooShort = validateProfileSubmission({
     name: "Siti",
+    email: "siti@example.com",
     bankName: "Maybank",
     bankAccount: "123",
     icNumber: "12-34",
@@ -132,6 +150,7 @@ test("profile: an IC with too few alphanumerics is rejected, separators do not c
   // A passport number is a valid IC value here — the check is deliberately loose.
   const passport = validateProfileSubmission({
     name: "Siti",
+    email: "siti@example.com",
     bankName: "Maybank",
     bankAccount: "123",
     icNumber: "A1234567",

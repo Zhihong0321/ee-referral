@@ -141,7 +141,7 @@ export default async function ReferralOverviewPage() {
                     <thead>
                       <tr className="border-b border-slate-200">
                         <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">
-                          Lead
+                          Lead (Potential Contact)
                         </th>
                         <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">
                           Referral In

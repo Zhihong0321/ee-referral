@@ -47,11 +47,11 @@ const assignedAgentIdSchema = z
   .refine((value) => value === "" || /^\d+$/.test(value), "Assigned agent is invalid");
 
 const referralInputSchema = z.object({
-  leadName: z.string().trim().min(2, "Lead name is required"),
-  leadMobileNumber: z.string().trim().min(6, "Lead mobile number is required"),
-  leadState: z.string().trim().min(2, "Lead state is required"),
-  leadCity: z.string().trim().max(120, "Lead city is too long").optional().default(""),
-  leadAddress: z.string().trim().max(500, "Lead address is too long").optional().default(""),
+  leadName: z.string().trim().min(2, "Lead (potential contact) name is required"),
+  leadMobileNumber: z.string().trim().min(6, "Lead (potential contact) mobile number is required"),
+  leadState: z.string().trim().min(2, "Lead (potential contact) state is required"),
+  leadCity: z.string().trim().max(120, "Lead (potential contact) city is too long").optional().default(""),
+  leadAddress: z.string().trim().max(500, "Lead (potential contact) address is too long").optional().default(""),
   relationship: z.enum(RELATIONSHIP_OPTIONS),
   projectType: z.enum(PROJECT_TYPE_OPTIONS),
   preferredAgentId: preferredAgentIdSchema.optional().default(""),
@@ -70,6 +70,7 @@ const managerReferralUpdateSchema = z.object({
 
 const referrerProfileSchema = z.object({
   displayName: z.string().trim().min(2, "Name is required").max(80, "Name is too long"),
+  email: z.string().trim().email("Enter a valid email address").max(254, "Email is too long"),
   profilePicture: z
     .string()
     .trim()
@@ -90,6 +91,7 @@ export type ReferrerAccount = {
   customerId: string;
   name: string;
   phone: string;
+  email: string;
   profilePicture: string | null;
   bankAccount: string;
   bankerName: string;
@@ -155,6 +157,7 @@ type ReferrerAccountRow = {
   customer_id: string;
   name: string | null;
   phone: string | null;
+  email: string | null;
   profile_picture: string | null;
   notes: string | null;
   remark: string | null;
@@ -203,6 +206,7 @@ function buildReferrerAccount(row: ReferrerAccountRow, fallbackPhone: string): R
     customerId: row.customer_id,
     name: row.name?.trim() || REFERRAL_ACCOUNT_NAME,
     phone: row.phone?.trim() || fallbackPhone,
+    email: row.email?.trim() || "",
     profilePicture: row.profile_picture,
     bankAccount: typeof noteData.bankAccount === "string" ? noteData.bankAccount : "",
     bankerName: typeof noteData.bankerName === "string" ? noteData.bankerName : "",
@@ -454,7 +458,7 @@ export async function findReferrerAccountByPhone(phoneInput: string): Promise<Re
 
   const existing = await query<ReferrerAccountRow>(
     `
-      SELECT customer_id, name, phone, profile_picture, notes, remark
+      SELECT customer_id, name, phone, email, profile_picture, notes, remark
       FROM customer
       WHERE phone = $1
         AND remark = ANY($2::text[])
@@ -480,7 +484,7 @@ export async function findOrCreateReferrerAccount(authUser: AuthHubUser): Promis
 
   const existing = await query<ReferrerAccountRow>(
     `
-      SELECT customer_id, name, phone, profile_picture, notes, remark
+      SELECT customer_id, name, phone, email, profile_picture, notes, remark
       FROM customer
       WHERE phone = $1
         AND remark = ANY($2::text[])
@@ -538,7 +542,7 @@ export async function findOrCreateReferrerAccount(authUser: AuthHubUser): Promis
         updated_by
       )
       VALUES ($1, $2, $3, 'other', $4, $5, $6, $6)
-      RETURNING customer_id, name, phone, profile_picture, notes, remark
+      RETURNING customer_id, name, phone, email, profile_picture, notes, remark
     `,
     [generatedCustomerId, REFERRAL_ACCOUNT_NAME, phone, REFERRAL_MARKER, notes, APP_ACTOR],
   );
@@ -590,19 +594,21 @@ export async function updateReferrerProfile(
         UPDATE customer
         SET
           name = $1,
-          profile_picture = $2,
-          notes = $3,
-          remark = $4,
-          updated_by = $5,
+          email = $2,
+          profile_picture = $3,
+          notes = $4,
+          remark = $5,
+          updated_by = $6,
           updated_at = NOW()
-        WHERE customer_id = $6
+        WHERE customer_id = $7
       `,
       [
         parsed.data.displayName,
+        parsed.data.email,
         parsed.data.profilePicture || null,
         JSON.stringify(mergedNotes),
         REFERRAL_MARKER,
-        referrer.customerId,
+        APP_ACTOR,
         referrer.customerId,
       ],
     );
