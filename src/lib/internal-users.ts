@@ -2,13 +2,10 @@ import type { AuthHubUser } from "@/lib/auth";
 import { query } from "@/lib/db";
 
 export type InternalAppUser = {
+  userId: string;
   bubbleId: string;
   name: string;
   accessLevels: string[];
-  linkedAgentProfile: string | null;
-  agentId: string | null;
-  agentBubbleId: string | null;
-  agentName: string | null;
 };
 
 function normalizePhone(phone: string) {
@@ -36,13 +33,13 @@ export async function findInternalAppUser(authUser: AuthHubUser): Promise<Intern
   const authUserId = authUser.userId?.trim() || null;
 
   const userResult = await query<{
+    id: number;
     bubble_id: string;
     name: string | null;
     access_level: string[] | null;
-    linked_agent_profile: string | null;
   }>(
     `
-      SELECT bubble_id, name, access_level, linked_agent_profile
+      SELECT id, bubble_id, name, access_level
       FROM "user"
       WHERE (
         $1::text IS NOT NULL
@@ -66,48 +63,14 @@ export async function findInternalAppUser(authUser: AuthHubUser): Promise<Intern
 
   const matchedUser = userResult.rows[0];
 
-  if (!matchedUser) {
+  if (!matchedUser?.bubble_id?.trim()) {
     return null;
   }
 
-  const agentResult = await query<{
-    id: number;
-    bubble_id: string;
-    name: string | null;
-  }>(
-    `
-      SELECT id, bubble_id, name
-      FROM "user"
-      WHERE (
-        $1::text IS NOT NULL
-        AND (bubble_id = $1 OR id::text = $1)
-      )
-      OR (
-        $2::text IS NOT NULL
-        AND bubble_id = $2
-      )
-      ORDER BY
-        CASE
-          WHEN $1::text IS NOT NULL AND (bubble_id = $1 OR id::text = $1) THEN 0
-          WHEN $2::text IS NOT NULL AND bubble_id = $2 THEN 1
-          ELSE 2
-        END,
-        updated_at DESC NULLS LAST,
-        id DESC
-      LIMIT 1
-    `,
-    [matchedUser.linked_agent_profile, matchedUser.bubble_id],
-  );
-
-  const matchedAgent = agentResult.rows[0];
-
   return {
-    bubbleId: matchedUser.bubble_id,
+    userId: String(matchedUser.id),
+    bubbleId: matchedUser.bubble_id.trim(),
     name: matchedUser.name?.trim() || authUser.name?.trim() || authUser.phone,
     accessLevels: normalizeAccessLevels(matchedUser.access_level),
-    linkedAgentProfile: matchedUser.linked_agent_profile,
-    agentId: matchedAgent ? String(matchedAgent.id) : null,
-    agentBubbleId: matchedAgent?.bubble_id ?? null,
-    agentName: matchedAgent?.name?.trim() ?? null,
   };
 }

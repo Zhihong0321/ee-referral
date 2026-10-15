@@ -438,9 +438,9 @@ async function renderManagerDashboard(params: Awaited<DashboardPageProps["search
 async function renderAgentDashboard(
   params: Awaited<DashboardPageProps["searchParams"]>,
   agentName: string,
-  agentId: string,
+  salesUser: { bubbleId: string; userId: string },
 ) {
-  const referrals = await listAssignedReferrals(agentId);
+  const referrals = await listAssignedReferrals(salesUser);
 
   return (
     <DashboardShell
@@ -970,8 +970,11 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
     return renderManagerDashboard(params, internalUser.name);
   }
 
-  if (internalUser?.agentId) {
-    return renderAgentDashboard(params, internalUser.agentName || internalUser.name, internalUser.agentId);
+  if (internalUser) {
+    return renderAgentDashboard(params, internalUser.name, {
+      bubbleId: internalUser.bubbleId,
+      userId: internalUser.userId,
+    });
   }
 
   return renderReferrerDashboard(params, authUser);

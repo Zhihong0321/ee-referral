@@ -58,114 +58,21 @@ Required:
 - `APP_BASE_URL`
 - `AUTH_HUB_URL` (default: `https://auth.atap.solar`)
 
+## Lead intake API
+
+The Lead API provides three authenticated endpoints configured via `LEADS_API_KEY`:
+
+- `GET /api/leads/sources` (or `GET /api/leads/ads`): Lists available ad accounts and lead sources (e.g. `Meta Ads Leon`, `Google Ads Gan`, `Facebook Ads`, `Google Ads`) with their IDs.
+- `GET /api/leads/agents` (or `GET /api/agents`): Lists available sales agents (`access_level` containing `sales`) to assign leads to.
+- `POST /api/leads`: Ingests incoming leads, associates them with the selected ad account or referrer, and assigns them to a sales user.
+
+Public documentation is served at `/api-docs` without login and linked from the
+homepage. See [API requests, configuration, and responses](docs/lead-api.md) for
+server setup details.
+
 ## Run
 
 ```bash
 npm install
 npm run dev
 ```
-
-Open [http://localhost:3000](http://localhost:3000).
-
-## Docker / Railway
-
-This repo includes a production `Dockerfile` for Railway deployment.
-
-Local container commands:
-
-```bash
-npm run docker:build
-npm run docker:run
-```
-
-Railway environment variables to set:
-
-- `DATABASE_URL`
-- `JWT_SECRET`
-- `APP_BASE_URL`
-- `AUTH_HUB_URL`
-- `WHATSAPP_AGENT_BAILEYS_BASE_URL`
-- `WHATSAPP_AGENT_BAILEYS_SESSION_ID`
-- `WHATSAPP_AGENT_PROCESS_SECRET`
-- `WHATSAPP_AGENT_DEBUG_SECRET`
-- `AI_API_KEY`
-- `AI_BASE_URL`
-- `AI_MODEL`
-
-## WhatsApp Agent Inbound Processing
-
-Baileys promotes inbound WhatsApp messages into `et_messages`. The production worker calls:
-
-```text
-POST /api/whatsapp-agent/process
-```
-
-with:
-
-```json
-{
-  "source": "database",
-  "limit": 10,
-  "lookbackMinutes": 60
-}
-```
-
-The processor reads unreplied inbound rows from `et_messages`, including `message_type`, `text_content`, `media_url`, and `raw_payload`. Database-changing referral actions are handled by deterministic application workflow. The language model is read-only and is used only for conversational answers and clarification.
-
-Media handling:
-
-- `contact` / `contacts`: parsed from `raw_payload.message.contactMessage` or `contactsArrayMessage`, then saved through the deterministic lead workflow.
-- `image`: `media_url` is resolved and sent to the configured vision model for extraction, then saved through the deterministic lead workflow when a phone is present.
-- `video`: `media_url` is resolved and sent to the configured vision model for extraction.
-- `audio` / voice note: `media_url` is downloaded and sent to the configured OpenAI-compatible `/audio/transcriptions` endpoint, then the transcript is sent to the agent.
-- `document` / `sticker`: caption, filename, and media URL are preserved; the agent asks for missing text details when the content is not extractable.
-
-Webhook/testing payloads are still supported through:
-
-```text
-POST /api/whatsapp-agent/webhook
-```
-
-The configured Baileys service currently posts to this endpoint without an
-authorization header. Add mandatory webhook authentication only after Baileys is
-configured to send the same credential.
-
-The route accepts Meta WhatsApp Cloud API webhook payloads, Baileys-style `messages` arrays, or a simple normalized payload:
-
-```json
-{
-  "externalMessageId": "msg_123",
-  "senderPhone": "60123456789",
-  "recipientPhone": "60182920127",
-  "messageType": "text",
-  "text": "add lead",
-  "mediaUrl": ""
-}
-```
-
-For Meta webhook verification, set `WHATSAPP_AGENT_WEBHOOK_VERIFY_TOKEN`; the route responds to `hub.challenge` on `GET /api/whatsapp-agent/webhook`.
-
-Webhook requests are logged as structured metadata without raw message bodies.
-
-If a message is missing from `et_messages`, call `/api/whatsapp-agent/diagnostics` with the debug bearer token and inspect recent inbox errors.
-
-Local debug helper:
-
-```bash
-npm run whatsapp:debug-media -- summary
-npm run whatsapp:debug-media -- pending --limit 20 --lookback 1440
-npm run whatsapp:debug-media -- contacts --limit 20
-npm run whatsapp:debug-media -- probe-url --id <et_messages_id_or_external_message_id>
-npm run whatsapp:debug-media -- asr --id <et_messages_id_or_external_message_id>
-```
-
-The helper loads `.env.local` / `.env`, reads through the SQL proxy or `DATABASE_URL`, and does not send WhatsApp replies. `asr` is the only command that calls the ASR endpoint, and only for the selected message or URL.
-
-## Auth flow used
-
-1. User enters app dashboard.
-2. If `auth_token` cookie is missing/invalid, app redirects to Auth Hub:
-   - `https://auth.atap.solar/?return_to=<your-app-url>`
-3. User logs in by WhatsApp OTP at Auth Hub.
-4. Auth Hub redirects back.
-5. App verifies JWT from `auth_token` using shared `JWT_SECRET`.
