@@ -115,16 +115,16 @@ function AddLeadFormCard({ form, busy, onCancel, onSubmit }: FormCardProps & { f
 
   return (
     <FormShell
-      title="Add Lead"
+      title="Add Lead (Potential Contact)"
       subtitle="添加目标客户"
-      submitLabel="Submit lead"
+      submitLabel="Submit lead (potential contact)"
       busy={busy}
       onCancel={onCancel}
       onSubmit={handleSubmit}
     >
       <div>
         <label className={LABEL_CLASS} htmlFor="lead-name">
-          1. Lead · 目标客户
+          1. Lead (Potential Contact) · 目标客户
         </label>
         <input
           id="lead-name"
@@ -132,7 +132,7 @@ function AddLeadFormCard({ form, busy, onCancel, onSubmit }: FormCardProps & { f
           onChange={(event) => setLeadName(event.target.value)}
           disabled={busy}
           className={INPUT_CLASS}
-          placeholder="Lead's name"
+          placeholder="Name of lead (potential contact)"
           autoComplete="off"
         />
         <FieldError message={errors.leadName} />
@@ -142,9 +142,9 @@ function AddLeadFormCard({ form, busy, onCancel, onSubmit }: FormCardProps & { f
           disabled={busy}
           inputMode="tel"
           className={INPUT_CLASS}
-          placeholder="Lead's phone number, e.g. 012-345 6789"
+          placeholder="Phone number, e.g. 012-345 6789"
           autoComplete="off"
-          aria-label="Lead's phone number"
+          aria-label="Phone number of lead (potential contact)"
         />
         <FieldError message={errors.leadMobileNumber} />
         <input
@@ -154,12 +154,12 @@ function AddLeadFormCard({ form, busy, onCancel, onSubmit }: FormCardProps & { f
           className={INPUT_CLASS}
           placeholder="Area or state (optional)"
           autoComplete="off"
-          aria-label="Lead's area or state"
+          aria-label="Area or state of lead (potential contact)"
         />
       </div>
 
       <div>
-        <span className={LABEL_CLASS}>2. From Referral · 介绍人</span>
+        <span className={LABEL_CLASS}>2. From Referrer (Introducer) · 介绍人</span>
         <div className={READONLY_CLASS}>
           <p className="text-[15px] leading-6 text-slate-700">{form.referrer.name}</p>
           <p className="font-mono text-xs text-slate-400">{form.referrer.phone}</p>
@@ -207,6 +207,7 @@ function AddLeadFormCard({ form, busy, onCancel, onSubmit }: FormCardProps & { f
 
 function ProfileFormCard({ form, busy, onCancel, onSubmit }: FormCardProps & { form: WebchatProfileForm }) {
   const [name, setName] = useState(form.values.name);
+  const [email, setEmail] = useState(form.values.email);
   const [bankName, setBankName] = useState(form.values.bankName);
   const [bankAccount, setBankAccount] = useState(form.values.bankAccount);
   const [icNumber, setIcNumber] = useState(form.values.icNumber);
@@ -218,7 +219,7 @@ function ProfileFormCard({ form, busy, onCancel, onSubmit }: FormCardProps & { f
     event.preventDefault();
     if (busy) return;
 
-    const fields = { name, bankName, bankAccount, icNumber, tin, address };
+    const fields = { name, email, bankName, bankAccount, icNumber, tin, address };
     const validated = validateProfileSubmission(fields);
 
     if (!validated.ok) {
@@ -242,7 +243,7 @@ function ProfileFormCard({ form, busy, onCancel, onSubmit }: FormCardProps & { f
     >
       <div>
         <label className={LABEL_CLASS} htmlFor="profile-name">
-          Referrer name · 介绍人姓名
+          Referrer (Introducer) name · 介绍人姓名
         </label>
         <input
           id="profile-name"
@@ -254,6 +255,23 @@ function ProfileFormCard({ form, busy, onCancel, onSubmit }: FormCardProps & { f
           autoComplete="name"
         />
         <FieldError message={errors.name} />
+      </div>
+
+      <div>
+        <label className={LABEL_CLASS} htmlFor="profile-email">
+          Email · 电邮
+        </label>
+        <input
+          id="profile-email"
+          type="email"
+          value={email}
+          onChange={(event) => setEmail(event.target.value)}
+          disabled={busy}
+          className={INPUT_CLASS}
+          placeholder="you@example.com"
+          autoComplete="email"
+        />
+        <FieldError message={errors.email} />
       </div>
 
       <div>

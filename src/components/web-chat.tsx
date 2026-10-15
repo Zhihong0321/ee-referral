@@ -514,7 +514,7 @@ export default function WebChat({ detectedStaff }: { detectedStaff: DetectedStaf
               What&apos;s your phone number? I&apos;ll use it to pull up your referral account.
             </p>
             <p className="mt-2 text-sm font-medium leading-5 text-red-600">
-              Please enter the Referrer&apos;s Phone Number
+              Please enter the Referrer (Introducer)&apos;s Phone Number
               <br />
               请用介绍人的号码登录
             </p>

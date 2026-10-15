@@ -5,16 +5,49 @@ import { PROJECT_TYPE_OPTIONS, RELATIONSHIP_OPTIONS } from "@/lib/referral-optio
 
 export const metadata: Metadata = {
   title: "Lead API Documentation | Eternalgy Referral",
-  description: "Create leads from Google Ads, Facebook Ads, or a referrer, and assign them to a sales agent through the Eternalgy Lead API.",
+  description: "Create leads from Meta Ads, Google Ads, or a referrer, and assign them to a sales agent through the Eternalgy Lead API.",
 };
+
+const listSourcesExample = `curl --request GET 'https://referral.atap.solar/api/leads/sources' \\
+  --header "Authorization: Bearer $LEADS_API_KEY"`;
+
+const listSourcesResponseExample = JSON.stringify({
+  sources: [
+    { id: "src_6c7df534e1f9572f1d3da1e3", name: "Meta Ads Leon", type: "ads" },
+    { id: "src_74b907b7af778fd4154dcff7", name: "Google Ads Gan", type: "ads" },
+    { id: "src_56c6cd5bfa64e52c9a416340", name: "Facebook Ads", type: "ads" },
+    { id: "src_62fa52b9d94790dcbd2d6d92", name: "Google Ads", type: "ads" },
+  ],
+  ads: [
+    { id: "src_6c7df534e1f9572f1d3da1e3", name: "Meta Ads Leon", type: "ads" },
+    { id: "src_74b907b7af778fd4154dcff7", name: "Google Ads Gan", type: "ads" },
+    { id: "src_56c6cd5bfa64e52c9a416340", name: "Facebook Ads", type: "ads" },
+    { id: "src_62fa52b9d94790dcbd2d6d92", name: "Google Ads", type: "ads" },
+  ],
+}, null, 2);
+
+const listAgentsExample = `curl --request GET 'https://referral.atap.solar/api/leads/agents' \\
+  --header "Authorization: Bearer $LEADS_API_KEY"`;
+
+const listAgentsResponseExample = JSON.stringify({
+  agents: [
+    {
+      id: "USER_BUBBLE_ID",
+      name: "Ali Sales",
+      bubbleId: "USER_BUBBLE_ID",
+      numericId: 42,
+      accessLevels: ["Sales"],
+    },
+  ],
+}, null, 2);
 
 const requestExample = `curl --request POST 'https://referral.atap.solar/api/leads' \\
   --header "Authorization: Bearer $LEADS_API_KEY" \\
   --header 'Content-Type: application/json' \\
   --data '{
-    "leadName": "Ali Ahmad",
+    "leadName": "Tan Ah Kow",
     "leadMobileNumber": "0123456789",
-    "referrer": "Google Ads",
+    "referrer": "Meta Ads Leon",
     "assignedAgentId": "USER_BUBBLE_ID",
     "leadState": "Selangor",
     "leadCity": "Kajang",
@@ -26,9 +59,9 @@ const successExample = JSON.stringify({
   lead: {
     referralId: 123,
     leadCustomerId: "cust_example",
-    leadName: "Ali Ahmad",
+    leadName: "Tan Ah Kow",
     leadMobileNumber: "60123456789",
-    referrer: { customerId: "src_example", name: "Google Ads", type: "source" },
+    referrer: { customerId: "src_6c7df534e1f9572f1d3da1e3", name: "Meta Ads Leon", type: "source" },
     assignedAgentId: "USER_BUBBLE_ID",
     status: "Assigned",
   },
@@ -37,7 +70,7 @@ const successExample = JSON.stringify({
 const fields = [
   ["leadName", "Yes", "string", "Lead name, 2–120 characters."],
   ["leadMobileNumber", "Yes", "string", "Malaysian mobile number. Local and +60 formats are accepted and normalized to 60… ."],
-  ["referrer", "Yes", "string | object", 'A source name, 2–120 characters, or { "customerId": "EXISTING_REFERRER_CUSTOMER_ID" }.'],
+  ["referrer", "Yes", "string | object", 'An ad source name (e.g. "Meta Ads Leon"), source ID ("src_..."), or { "customerId": "EXISTING_REFERRER_CUSTOMER_ID" }.'],
   ["assignedAgentId", "No", "string | integer", "Sales user’s Bubble ID (recommended) or positive numeric user ID. Omit to leave the lead unassigned."],
   ["leadState", "No", "string", "Up to 120 characters."],
   ["leadCity", "No", "string", "Up to 120 characters."],
@@ -56,12 +89,18 @@ const errors = [
   ["422", "INVALID_REFERRER", "The supplied person’s referrer account was not found."],
   ["503", "API_NOT_CONFIGURED", "The site administrator needs to configure the API key."],
   ["503", "ASSIGNMENT_NOT_CONFIGURED", "The site administrator needs to enable assignment storage."],
-  ["500", "INTERNAL_ERROR", "The lead could not be created. Database details are not returned."],
+  ["500", "INTERNAL_ERROR", "The request could not be completed. Database details are not returned."],
 ];
 
 const sections = [
-  ["authentication", "Authentication"], ["request", "Example request"], ["introducers", "Introducers & agents"],
-  ["fields", "Request fields"], ["response", "Success response"], ["errors", "Errors"],
+  ["authentication", "Authentication"],
+  ["sources", "List available ad sources"],
+  ["agents", "List available sales agents"],
+  ["request", "Create lead request"],
+  ["introducers", "Introducers & agents"],
+  ["fields", "Request fields"],
+  ["response", "Success response"],
+  ["errors", "Errors"],
 ];
 
 function CodeBlock({ label, children }: { label: string; children: string }) {
@@ -82,14 +121,26 @@ export default function ApiDocsPage() {
       </div>
       <header className="card-glow rounded-2xl border border-slate-200 bg-white p-6 sm:p-8">
         <p className="text-sm font-semibold text-teal-800">Lead intake API</p>
-        <h1 className="mt-2 text-3xl font-bold tracking-tight sm:text-4xl">Create a lead. Keep its source.</h1>
+        <h1 className="mt-2 text-3xl font-bold tracking-tight sm:text-4xl">List ad sources &amp; agents. Create leads with source tracking.</h1>
         <p className="mt-4 max-w-3xl text-sm leading-7 text-slate-600 sm:text-base">
-          Send leads from Google Ads, Facebook Ads, another source, or an existing referrer.
+          Query available ad accounts and sales agents, then send incoming leads from Meta Ads, Google Ads, custom forms, or referrers.
           Assign each lead to a sales agent independently of who introduced it.
         </p>
-        <div className="mt-5 flex flex-wrap items-center gap-3 rounded-xl bg-slate-100 p-4">
-          <span className="rounded-md bg-teal-800 px-3 py-1 text-xs font-bold text-white">POST</span>
-          <code className="break-all text-sm font-semibold">https://referral.atap.solar/api/leads</code>
+        <div className="mt-5 space-y-2">
+          <div className="flex flex-wrap items-center gap-3 rounded-xl bg-slate-100 p-3">
+            <span className="rounded-md bg-indigo-700 px-3 py-1 text-xs font-bold text-white">GET</span>
+            <code className="break-all text-sm font-semibold">https://referral.atap.solar/api/leads/sources</code>
+            <span className="text-xs text-slate-500">(also: /api/leads/ads, /api/sources)</span>
+          </div>
+          <div className="flex flex-wrap items-center gap-3 rounded-xl bg-slate-100 p-3">
+            <span className="rounded-md bg-blue-700 px-3 py-1 text-xs font-bold text-white">GET</span>
+            <code className="break-all text-sm font-semibold">https://referral.atap.solar/api/leads/agents</code>
+            <span className="text-xs text-slate-500">(also: /api/agents)</span>
+          </div>
+          <div className="flex flex-wrap items-center gap-3 rounded-xl bg-slate-100 p-3">
+            <span className="rounded-md bg-teal-800 px-3 py-1 text-xs font-bold text-white">POST</span>
+            <code className="break-all text-sm font-semibold">https://referral.atap.solar/api/leads</code>
+          </div>
         </div>
       </header>
 
@@ -108,23 +159,51 @@ export default function ApiDocsPage() {
             <h2 className="text-xl font-bold">Authentication</h2>
             <p className="mt-3 text-sm leading-7 text-slate-700">Obtain an API key from the site administrator and include it in every request. Login cookies are not required.</p>
             <CodeBlock label="Required headers">{"Authorization: Bearer YOUR_API_KEY\nContent-Type: application/json"}</CodeBlock>
-            <p className="mt-4 text-sm leading-7 text-slate-700">Keep the key on your server or in your automation platform’s secret storage. Send lead creation requests from that server or platform.</p>
+            <p className="mt-4 text-sm leading-7 text-slate-700">Keep the key on your server or in your automation platform’s secret storage. Send requests from that server or platform.</p>
+          </section>
+
+          <section id="sources" className="scroll-mt-6 rounded-2xl border border-slate-200 bg-white p-6 sm:p-8">
+            <h2 className="text-xl font-bold">List available ad sources</h2>
+            <p className="mt-3 text-sm leading-7 text-slate-700">
+              Query the available ad accounts and lead source referrers (e.g. <code>Meta Ads Leon</code>, <code>Google Ads Gan</code>, <code>Facebook Ads</code>, <code>Google Ads</code>) along with their customer IDs.
+            </p>
+            <CodeBlock label="cURL · List available ad sources">{listSourcesExample}</CodeBlock>
+            <h3 className="mt-4 font-semibold">Response (`200 OK`)</h3>
+            <CodeBlock label="200 OK · application/json">{listSourcesResponseExample}</CodeBlock>
+            <p className="mt-4 text-sm leading-7 text-slate-700">
+              Pass either the source’s <code>name</code> or its <code>id</code> into the <code>referrer</code> field when creating a lead.
+            </p>
+          </section>
+
+          <section id="agents" className="scroll-mt-6 rounded-2xl border border-slate-200 bg-white p-6 sm:p-8">
+            <h2 className="text-xl font-bold">List available sales agents</h2>
+            <p className="mt-3 text-sm leading-7 text-slate-700">
+              Call this endpoint before creating a lead to see which sales agents can be assigned.
+              Only users with an access level containing <code>sales</code> are returned.
+            </p>
+            <CodeBlock label="cURL · List available agents">{listAgentsExample}</CodeBlock>
+            <h3 className="mt-4 font-semibold">Response (`200 OK`)</h3>
+            <CodeBlock label="200 OK · application/json">{listAgentsResponseExample}</CodeBlock>
+            <p className="mt-4 text-sm leading-7 text-slate-700">
+              Pass the returned <code>id</code> (or <code>numericId</code>) as the <code>assignedAgentId</code> when creating the lead.
+            </p>
           </section>
 
           <section id="request" className="scroll-mt-6 rounded-2xl border border-slate-200 bg-white p-6 sm:p-8">
-            <h2 className="text-xl font-bold">Example request</h2>
-            <p className="mt-3 text-sm leading-7 text-slate-700">Set your API key in the <code>LEADS_API_KEY</code> environment variable, then replace <code>USER_BUBBLE_ID</code> with the assigned sales user’s ID.</p>
-            <CodeBlock label="cURL · Google Ads lead assigned to an agent">{requestExample}</CodeBlock>
+            <h2 className="text-xl font-bold">Create lead request</h2>
+            <p className="mt-3 text-sm leading-7 text-slate-700">Set your API key in the <code>LEADS_API_KEY</code> environment variable, then replace <code>USER_BUBBLE_ID</code> with the assigned sales user’s ID from the agents list above.</p>
+            <CodeBlock label="cURL · Meta Ads lead assigned to an agent">{requestExample}</CodeBlock>
           </section>
 
           <section id="introducers" className="scroll-mt-6 rounded-2xl border border-slate-200 bg-white p-6 sm:p-8">
             <h2 className="text-xl font-bold">Introducers &amp; agents</h2>
             <h3 className="mt-4 font-semibold">Advertising or another source</h3>
-            <p className="mt-2 text-sm leading-7 text-slate-700">Use a source name as the referrer. Google Ads and Facebook Ads are displayed consistently; case and repeated spaces do not create a different source. Other source names are accepted too.</p>
-            <CodeBlock label="Facebook Ads">{'"referrer": "Facebook Ads"'}</CodeBlock>
+            <p className="mt-2 text-sm leading-7 text-slate-700">Use a source name (such as <code>Meta Ads Leon</code>, <code>Google Ads Gan</code>, <code>Facebook Ads</code>, <code>Google Ads</code>) or a source ID (e.g. <code>src_6c7df534e1f9572f1d3da1e3</code>). Case and repeated spaces are canonicalized automatically.</p>
+            <CodeBlock label="Meta Ads Leon by name">{'\"referrer\": \"Meta Ads Leon\"'}</CodeBlock>
+            <CodeBlock label="Meta Ads Leon by ID">{'\"referrer\": \"src_6c7df534e1f9572f1d3da1e3\"'}</CodeBlock>
             <h3 className="mt-5 font-semibold">An existing person</h3>
             <p className="mt-2 text-sm leading-7 text-slate-700">Supply the customer ID of an existing referral account. This request does not create a person’s referrer account.</p>
-            <CodeBlock label="Existing referrer account">{'"referrer": { "customerId": "EXISTING_REFERRER_CUSTOMER_ID" }'}</CodeBlock>
+            <CodeBlock label="Existing referrer account">{'\"referrer\": { \"customerId\": \"EXISTING_REFERRER_CUSTOMER_ID\" }'}</CodeBlock>
             <h3 className="mt-5 font-semibold">Independent agent assignment</h3>
             <p className="mt-2 text-sm leading-7 text-slate-700">Use the sales user’s Bubble ID or numeric user ID in <code>assignedAgentId</code>. The response returns the Bubble ID. Omit the field to create an unassigned lead. This sets the assigned agent; it leaves the separate preferred agent empty.</p>
           </section>
@@ -158,11 +237,11 @@ export default function ApiDocsPage() {
           <section id="errors" className="scroll-mt-6 min-w-0 rounded-2xl border border-slate-200 bg-white p-6 sm:p-8">
             <h2 className="text-xl font-bold">Error responses</h2>
             <CodeBlock label="Example · 422 Unprocessable Content">{JSON.stringify({ error: "Assigned agent was not found or is not in sales.", code: "INVALID_AGENT" }, null, 2)}</CodeBlock>
-            <div className="mt-5 overflow-x-auto">
-              <table className="w-full min-w-[550px] text-left text-sm">
-                <caption className="sr-only">HTTP statuses and API error codes</caption>
-                <thead className="border-b-2 border-slate-200 text-slate-500"><tr><th scope="col" className="py-3 pr-3">Status</th><th scope="col" className="px-3 py-3">Code</th><th scope="col" className="px-3 py-3">Meaning</th></tr></thead>
-                <tbody>{errors.map(([status, code, meaning]) => <tr key={code} className="border-b border-slate-100 align-top"><td className="py-3 pr-3 font-mono">{status}</td><th scope="row" className="px-3 py-3 font-mono text-xs font-medium text-teal-800">{code}</th><td className="px-3 py-3 leading-6 text-slate-700">{meaning}</td></tr>)}</tbody>
+            <div className="mt-4 overflow-x-auto">
+              <table className="w-full min-w-[500px] text-left text-sm">
+                <caption className="sr-only">Error response status codes, internal error codes, and descriptions</caption>
+                <thead className="border-b-2 border-slate-200 text-slate-500"><tr>{["Status", "Code", "Description"].map((heading) => <th key={heading} scope="col" className="px-3 py-3 font-semibold first:pl-0">{heading}</th>)}</tr></thead>
+                <tbody>{errors.map(([status, code, description]) => <tr key={code} className="border-b border-slate-100 align-top"><th scope="row" className="py-3 pr-3 font-mono text-xs font-medium text-teal-800">{status}</th><td className="px-3 py-3 font-mono text-xs">{code}</td><td className="px-3 py-3 leading-6 text-slate-700">{description}</td></tr>)}</tbody>
               </table>
             </div>
           </section>

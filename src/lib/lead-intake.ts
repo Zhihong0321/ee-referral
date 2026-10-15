@@ -1,6 +1,15 @@
 import { randomUUID } from "node:crypto";
 
-import { LeadApiError, leadApiInputSchema, leadSourceCustomerId, type CreatedApiLead, type LeadApiInput } from "./lead-api.ts";
+import {
+  LeadApiError,
+  leadApiInputSchema,
+  leadSourceCustomerId,
+  type ApiAgentOption,
+  type ApiLeadSource,
+  type CreatedApiLead,
+  type LeadApiInput,
+} from "./lead-api.ts";
+import { isDigitalAdSource, KNOWN_AD_SOURCES, normalizeAdSourceName } from "./referral-options.ts";
 
 export type LeadSqlExecutor = <T>(sql: string, params?: unknown[]) => Promise<T[]>;
 
@@ -15,6 +24,94 @@ type Capabilities = {
   has_user_table: boolean;
   has_access_level: boolean;
 };
+
+export async function listApiAgents(execute: LeadSqlExecutor): Promise<ApiAgentOption[]> {
+  const [caps] = await execute<{ has_user_table: boolean; has_access_level: boolean }>(`
+    SELECT
+      EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'user') AS has_user_table,
+      EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'user' AND column_name = 'access_level') AS has_access_level
+  `);
+
+  if (!caps?.has_user_table) {
+    return [];
+  }
+
+  const salesFilter = caps.has_access_level
+    ? "AND EXISTS (SELECT 1 FROM unnest(u.access_level) AS level WHERE LOWER(level) LIKE '%sales%')"
+    : "";
+
+  const rows = await execute<{
+    id: number | string;
+    bubble_id: string | null;
+    name: string | null;
+    access_level: string[] | null;
+  }>(`
+    SELECT
+      u.id,
+      u.bubble_id,
+      u.name,
+      ${caps.has_access_level ? "u.access_level" : "ARRAY[]::text[] AS access_level"}
+    FROM "user" u
+    WHERE u.name IS NOT NULL
+      AND BTRIM(u.name) <> ''
+      AND u.bubble_id IS NOT NULL
+      AND BTRIM(u.bubble_id) <> ''
+      ${salesFilter}
+    ORDER BY u.name ASC, u.id ASC
+  `);
+
+  return rows.map((row) => ({
+    id: (row.bubble_id || "").trim(),
+    name: (row.name || "").trim(),
+    bubbleId: (row.bubble_id || "").trim(),
+    numericId: Number(row.id),
+    accessLevels: Array.isArray(row.access_level)
+      ? row.access_level.map((level) => String(level).trim()).filter(Boolean)
+      : [],
+  }));
+}
+
+export async function listApiSources(execute: LeadSqlExecutor): Promise<ApiLeadSource[]> {
+  const sourcesMap = new Map<string, ApiLeadSource>();
+
+  // 1. Seed with known/configured ad sources (e.g. Meta Ads Leon, Google Ads Gan, Facebook Ads, Google Ads)
+  for (const name of KNOWN_AD_SOURCES) {
+    const id = leadSourceCustomerId(name);
+    sourcesMap.set(id, {
+      id,
+      name,
+      type: "ads",
+    });
+  }
+
+  // 2. Fetch any other lead source accounts already in the database
+  try {
+    const rows = await execute<{ customer_id: string; name: string | null }>(`
+      SELECT customer_id, name
+      FROM customer
+      WHERE remark = 'LEAD_SOURCE_ACCOUNT'
+      ORDER BY name ASC
+    `);
+
+    for (const row of rows) {
+      if (!row.customer_id) continue;
+      const id = row.customer_id.trim();
+      const rawName = (row.name || "").trim() || id;
+      const name = normalizeAdSourceName(rawName);
+      if (!sourcesMap.has(id)) {
+        sourcesMap.set(id, {
+          id,
+          name,
+          type: isDigitalAdSource(name) ? "ads" : "other",
+        });
+      }
+    }
+  } catch {
+    // If customer table does not exist yet (e.g. mock/sandbox), return configured sources
+  }
+
+  return Array.from(sourcesMap.values());
+}
 
 export async function createApiLead(input: LeadApiInput, execute: LeadSqlExecutor): Promise<CreatedApiLead> {
   // Revalidate at the persistence boundary as well as the HTTP boundary.
@@ -59,15 +156,55 @@ export async function createApiLead(input: LeadApiInput, execute: LeadSqlExecuto
 
   let referrer: CreatedApiLead["referrer"];
   if (typeof lead.referrer === "string") {
-    referrer = { customerId: leadSourceCustomerId(lead.referrer), name: lead.referrer, type: "source" };
+    const rawReferrer = lead.referrer.trim();
+    // Check if it directly matches a known ad source ID
+    const knownById = KNOWN_AD_SOURCES.find((n) => leadSourceCustomerId(n) === rawReferrer);
+    if (knownById) {
+      referrer = { customerId: leadSourceCustomerId(knownById), name: knownById, type: "source" };
+    } else {
+      // Check if it matches an existing LEAD_SOURCE_ACCOUNT customer_id in DB
+      const [existingSource] = await execute<{ customer_id: string; name: string | null }>(`
+        SELECT customer_id, name FROM customer
+        WHERE customer_id = $1 AND remark = 'LEAD_SOURCE_ACCOUNT'
+        LIMIT 1
+      `, [rawReferrer]);
+      if (existingSource) {
+        referrer = {
+          customerId: existingSource.customer_id,
+          name: normalizeAdSourceName(existingSource.name || rawReferrer),
+          type: "source",
+        };
+      } else {
+        const normalized = normalizeAdSourceName(rawReferrer);
+        referrer = { customerId: leadSourceCustomerId(normalized), name: normalized, type: "source" };
+      }
+    }
   } else {
-    const [person] = await execute<{ customer_id: string; name: string | null }>(`
-      SELECT customer_id, name FROM customer
-      WHERE customer_id = $1 AND remark = ANY($2::text[])
-      LIMIT 1
-    `, [lead.referrer.customerId, ["REFERRAL_ACCOUNT", "REFERRER_ACCOUNT"]]);
-    if (!person) throw new LeadApiError(422, "INVALID_REFERRER", "Referrer account was not found.");
-    referrer = { customerId: person.customer_id, name: person.name || "Referral", type: "person" };
+    const rawId = lead.referrer.customerId.trim();
+    const knownById = KNOWN_AD_SOURCES.find((n) => leadSourceCustomerId(n) === rawId || n.toLowerCase() === rawId.toLowerCase());
+    if (knownById) {
+      referrer = { customerId: leadSourceCustomerId(knownById), name: knownById, type: "source" };
+    } else {
+      const [record] = await execute<{ customer_id: string; name: string | null; remark: string | null }>(`
+        SELECT customer_id, name, remark FROM customer
+        WHERE customer_id = $1 AND remark = ANY($2::text[])
+        LIMIT 1
+      `, [rawId, ["REFERRAL_ACCOUNT", "REFERRER_ACCOUNT", "LEAD_SOURCE_ACCOUNT"]]);
+
+      if (!record) {
+        throw new LeadApiError(422, "INVALID_REFERRER", "Referrer account was not found.");
+      }
+
+      if (record.remark === "LEAD_SOURCE_ACCOUNT") {
+        referrer = {
+          customerId: record.customer_id,
+          name: normalizeAdSourceName(record.name || "Ad Source"),
+          type: "source",
+        };
+      } else {
+        referrer = { customerId: record.customer_id, name: record.name || "Referral", type: "person" };
+      }
+    }
   }
 
   const status = assignedAgentId ? "Assigned" : "Pending";
@@ -86,7 +223,7 @@ export async function createApiLead(input: LeadApiInput, execute: LeadSqlExecuto
   ` : `SELECT ${referrerIdParam}::text AS customer_id, ${referrerNameParam}::text AS name`;
 
   const leadSource = referrer.type === "source"
-    ? ["Google Ads", "Facebook Ads"].includes(referrer.name) ? "digital_ads" : "other"
+    ? (isDigitalAdSource(referrer.name) ? "digital_ads" : "other")
     : "referral";
   const metadata = {
     relationship: lead.relationship,
@@ -131,8 +268,7 @@ export async function createApiLead(input: LeadApiInput, execute: LeadSqlExecuto
   // An audit failure rolls back the source, customer, and referral as well.
   const [created] = await execute<{ id: number; referrer_name: string }>(`
     WITH referrer AS (${referrerSql}),
-    inserted_customer AS (
-      INSERT INTO customer (${customerColumns.join(", ")})
+    inserted_customer AS (\n      INSERT INTO customer (${customerColumns.join(", ")})
       SELECT ${customerValues.join(", ")} FROM referrer
       RETURNING customer_id
     ),

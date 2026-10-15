@@ -12,9 +12,9 @@ import type { WebchatMenuState, WhatsappUpdateField } from "@/lib/agent/whatsapp
 
 export const MENU_TEXT = [
   "What would you like to do?",
-  "1. Add Lead",
-  "2. Edit Lead",
-  "3. Check Lead",
+  "1. Add Lead (Potential Contact)",
+  "2. Edit Lead (Potential Contact)",
+  "3. Check Lead (Potential Contact)",
   "4. My Details",
 ].join("\n");
 
@@ -70,14 +70,17 @@ export type StepResult = { reply: string; nextState: WebchatMenuState; form?: We
 export function handleEditPickLead(state: Extract<WebchatMenuState, { step: "edit_pick_lead" }>, trimmed: string): StepResult {
   const n = parseNumber(trimmed);
   if (!n || n < 1 || n > state.leads.length) {
-    return { reply: `Please reply with a lead number between 1 and ${state.leads.length}.`, nextState: state };
+    return {
+      reply: `Please reply with a lead (potential contact) number between 1 and ${state.leads.length}.`,
+      nextState: state,
+    };
   }
 
   const picked = state.leads[n - 1];
   const fieldLines = EDIT_FIELD_OPTIONS.map((opt, idx) => `${idx + 1}. ${opt.label}`).join("\n");
 
   return {
-    reply: `Editing lead "${picked.label}". What would you like to change?\n${fieldLines}`,
+    reply: `Editing lead (potential contact) "${picked.label}". What would you like to change?\n${fieldLines}`,
     nextState: { step: "edit_pick_field", referralId: picked.referralId, leadLabel: picked.label },
   };
 }

@@ -17,7 +17,7 @@ export default async function WebChatPage() {
 
   return (
     <WebChat
-      detectedStaff={internalUser ? { name: internalUser.agentName || internalUser.name } : null}
+      detectedStaff={internalUser ? { name: internalUser.name } : null}
     />
   );
 }

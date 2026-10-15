@@ -4,7 +4,9 @@ import type { PoolClient, QueryResultRow } from "pg";
 import type { AuthHubUser } from "@/lib/auth";
 import { type ActivityLogActor, writeActivityLog } from "@/lib/activity-log";
 import { getPool, query } from "@/lib/db";
-import { assignedUserJoin, assignedUserMatch } from "@/lib/referral-agent-sql";
+import { PROJECT_TYPE_OPTIONS, RELATIONSHIP_OPTIONS } from "@/lib/referral-options";
+
+export { PROJECT_TYPE_OPTIONS, RELATIONSHIP_OPTIONS } from "@/lib/referral-options";
 
 const REFERRAL_MARKER = "REFERRAL_ACCOUNT";
 const LEGACY_REFERRER_MARKER = "REFERRER_ACCOUNT";
@@ -19,43 +21,26 @@ export const REFERRAL_STATUSES = [
   "Successful",
   "Rejected",
 ] as const;
-export const RELATIONSHIP_OPTIONS = [
-  "Family",
-  "Friend",
-  "Colleague",
-  "Neighbor",
-  "Business Partner",
-  "Existing Customer",
-  "Community Contact",
-  "Other",
-] as const;
-export const PROJECT_TYPE_OPTIONS = ["RESIDENTIAL (2%)", "SHOP-LOT (2%)", "FACTORY (1%)", "OTHERS"] as const;
 
 export type RelationshipOption = (typeof RELATIONSHIP_OPTIONS)[number];
 export type ProjectTypeOption = (typeof PROJECT_TYPE_OPTIONS)[number];
 export type ReferralStatus = (typeof REFERRAL_STATUSES)[number];
 
-const preferredAgentIdSchema = z
+const salesUserRefSchema = z
   .string()
   .trim()
-  .max(20, "Preferred agent is invalid")
-  .refine((value) => value === "" || /^\d+$/.test(value), "Preferred agent is invalid");
-
-const assignedAgentIdSchema = z
-  .string()
-  .trim()
-  .max(20, "Assigned agent is invalid")
-  .refine((value) => value === "" || /^\d+$/.test(value), "Assigned agent is invalid");
+  .max(80, "Sales user is invalid")
+  .refine((value) => value === "" || /^[A-Za-z0-9_-]+$/.test(value), "Sales user is invalid");
 
 const referralInputSchema = z.object({
-  leadName: z.string().trim().min(2, "Lead name is required"),
-  leadMobileNumber: z.string().trim().min(6, "Lead mobile number is required"),
-  leadState: z.string().trim().min(2, "Lead state is required"),
-  leadCity: z.string().trim().max(120, "Lead city is too long").optional().default(""),
-  leadAddress: z.string().trim().max(500, "Lead address is too long").optional().default(""),
+  leadName: z.string().trim().min(2, "Lead (potential contact) name is required"),
+  leadMobileNumber: z.string().trim().min(6, "Lead (potential contact) mobile number is required"),
+  leadState: z.string().trim().min(2, "Lead (potential contact) state is required"),
+  leadCity: z.string().trim().max(120, "Lead (potential contact) city is too long").optional().default(""),
+  leadAddress: z.string().trim().max(500, "Lead (potential contact) address is too long").optional().default(""),
   relationship: z.enum(RELATIONSHIP_OPTIONS),
   projectType: z.enum(PROJECT_TYPE_OPTIONS),
-  preferredAgentId: preferredAgentIdSchema.optional().default(""),
+  preferredAgentId: salesUserRefSchema.optional().default(""),
   remark: z.string().trim().max(500, "Remark is too long").optional().default(""),
 });
 
@@ -65,12 +50,13 @@ const referralEditSchema = referralInputSchema.extend({
 
 const managerReferralUpdateSchema = z.object({
   referralId: z.coerce.number().int().positive(),
-  assignedAgentId: assignedAgentIdSchema.optional().default(""),
+  assignedAgentId: salesUserRefSchema.optional().default(""),
   status: z.enum(REFERRAL_STATUSES),
 });
 
 const referrerProfileSchema = z.object({
   displayName: z.string().trim().min(2, "Name is required").max(80, "Name is too long"),
+  email: z.string().trim().email("Enter a valid email address").max(254, "Email is too long"),
   profilePicture: z
     .string()
     .trim()
@@ -91,6 +77,7 @@ export type ReferrerAccount = {
   customerId: string;
   name: string;
   phone: string;
+  email: string;
   profilePicture: string | null;
   bankAccount: string;
   bankerName: string;
@@ -128,6 +115,8 @@ export type ManagerReferralFilters = {
   status?: string;
   preferredAgentId?: string;
   assignedAgentId?: string;
+  salesUserBubbleId?: string;
+  salesUserId?: string;
 };
 
 export type AgentOption = {
@@ -156,6 +145,7 @@ type ReferrerAccountRow = {
   customer_id: string;
   name: string | null;
   phone: string | null;
+  email: string | null;
   profile_picture: string | null;
   notes: string | null;
   remark: string | null;
@@ -204,6 +194,7 @@ function buildReferrerAccount(row: ReferrerAccountRow, fallbackPhone: string): R
     customerId: row.customer_id,
     name: row.name?.trim() || REFERRAL_ACCOUNT_NAME,
     phone: row.phone?.trim() || fallbackPhone,
+    email: row.email?.trim() || "",
     profilePicture: row.profile_picture,
     bankAccount: typeof noteData.bankAccount === "string" ? noteData.bankAccount : "",
     bankerName: typeof noteData.bankerName === "string" ? noteData.bankerName : "",
@@ -224,8 +215,6 @@ async function getCustomerCapabilities(executor: Queryable): Promise<CustomerCap
     has_referral_lead_state: boolean;
     has_referral_lead_city: boolean;
     has_referral_lead_address: boolean;
-    has_agent_table: boolean;
-    has_agent_linked_user_login: boolean;
     has_user_table: boolean;
     has_user_access_level: boolean;
   }>(`
@@ -340,6 +329,78 @@ function buildLeadAddressSelect(capabilities: CustomerCapabilities) {
   return "c.address AS lead_address";
 }
 
+function salesUserMatchSql(column: string, paramIndex: number): string {
+  return `(
+    ${column} = $${paramIndex}
+    OR EXISTS (
+      SELECT 1
+      FROM "user" matched_sales_user
+      WHERE (
+        matched_sales_user.bubble_id = $${paramIndex}
+        OR (
+          $${paramIndex} ~ '^[0-9]+$'
+          AND matched_sales_user.id = $${paramIndex}::bigint
+        )
+      )
+      AND (
+        ${column} = matched_sales_user.bubble_id
+        OR ${column} = matched_sales_user.id::text
+      )
+    )
+  )`;
+}
+
+function salesUserJoin(capabilities: CustomerCapabilities, column: string, alias: string): string {
+  if (!capabilities.hasUserTable) {
+    return "";
+  }
+
+  return `
+    LEFT JOIN LATERAL (
+      SELECT u.bubble_id, u.name
+      FROM "user" u
+      WHERE u.bubble_id = NULLIF(BTRIM(${column}), '')
+         OR (
+           NULLIF(BTRIM(${column}), '') ~ '^[0-9]+$'
+           AND u.id = NULLIF(BTRIM(${column}), '')::bigint
+         )
+      ORDER BY CASE WHEN u.bubble_id = NULLIF(BTRIM(${column}), '') THEN 0 ELSE 1 END, u.id
+      LIMIT 1
+    ) ${alias} ON TRUE
+  `;
+}
+
+function salesUserIdSelect(
+  capabilities: CustomerCapabilities,
+  column: string,
+  alias: string,
+  joinAlias: string,
+  hasColumn: boolean,
+): string {
+  if (!hasColumn) {
+    return `NULL::text AS ${alias}`;
+  }
+
+  if (!capabilities.hasUserTable) {
+    return `NULLIF(BTRIM(${column}), '') AS ${alias}`;
+  }
+
+  return `COALESCE(${joinAlias}.bubble_id, NULLIF(BTRIM(${column}), '')) AS ${alias}`;
+}
+
+function salesUserNameSelect(
+  capabilities: CustomerCapabilities,
+  alias: string,
+  joinAlias: string,
+  hasColumn: boolean,
+): string {
+  if (!hasColumn || !capabilities.hasUserTable) {
+    return `NULL::text AS ${alias}`;
+  }
+
+  return `${joinAlias}.name AS ${alias}`;
+}
+
 async function normalizeAgentId(
   client: PoolClient,
   agentId: string,
@@ -356,22 +417,28 @@ async function normalizeAgentId(
     return null;
   }
 
-  const existing = await client.query<{ id: number }>(
+  const existing = await client.query<{ bubble_id: string | null }>(
     `
-      SELECT u.id
+      SELECT u.bubble_id
       FROM "user" u
-      WHERE u.id = $1
+      WHERE (
+        u.bubble_id = $1
+        OR ($1 ~ '^[0-9]+$' AND u.id = $1::bigint)
+      )
         ${capabilities.hasUserAccessLevel ? "AND EXISTS (SELECT 1 FROM unnest(u.access_level) AS x WHERE LOWER(x) LIKE '%sales%')" : ""}
+      ORDER BY CASE WHEN u.bubble_id = $1 THEN 0 ELSE 1 END, u.id
       LIMIT 1
     `,
-    [Number(normalized)],
+    [normalized],
   );
 
-  if (existing.rows.length === 0) {
+  const bubbleId = existing.rows[0]?.bubble_id?.trim();
+
+  if (!bubbleId) {
     throw new ReferralError(`${errorLabel} was not found or is not in sales.`);
   }
 
-  return normalized;
+  return bubbleId;
 }
 
 async function getAgentLabel(client: PoolClient, agentId: string | null): Promise<string> {
@@ -383,10 +450,12 @@ async function getAgentLabel(client: PoolClient, agentId: string | null): Promis
     `
       SELECT u.name
       FROM "user" u
-      WHERE u.id = $1
+      WHERE u.bubble_id = $1
+         OR ($1 ~ '^[0-9]+$' AND u.id = $1::bigint)
+      ORDER BY CASE WHEN u.bubble_id = $1 THEN 0 ELSE 1 END, u.id
       LIMIT 1
     `,
-    [Number(agentId)],
+    [agentId],
   );
 
   return result.rows[0]?.name?.trim() || agentId;
@@ -455,7 +524,7 @@ export async function findReferrerAccountByPhone(phoneInput: string): Promise<Re
 
   const existing = await query<ReferrerAccountRow>(
     `
-      SELECT customer_id, name, phone, profile_picture, notes, remark
+      SELECT customer_id, name, phone, email, profile_picture, notes, remark
       FROM customer
       WHERE phone = $1
         AND remark = ANY($2::text[])
@@ -481,7 +550,7 @@ export async function findOrCreateReferrerAccount(authUser: AuthHubUser): Promis
 
   const existing = await query<ReferrerAccountRow>(
     `
-      SELECT customer_id, name, phone, profile_picture, notes, remark
+      SELECT customer_id, name, phone, email, profile_picture, notes, remark
       FROM customer
       WHERE phone = $1
         AND remark = ANY($2::text[])
@@ -539,7 +608,7 @@ export async function findOrCreateReferrerAccount(authUser: AuthHubUser): Promis
         updated_by
       )
       VALUES ($1, $2, $3, 'other', $4, $5, $6, $6)
-      RETURNING customer_id, name, phone, profile_picture, notes, remark
+      RETURNING customer_id, name, phone, email, profile_picture, notes, remark
     `,
     [generatedCustomerId, REFERRAL_ACCOUNT_NAME, phone, REFERRAL_MARKER, notes, APP_ACTOR],
   );
@@ -591,19 +660,21 @@ export async function updateReferrerProfile(
         UPDATE customer
         SET
           name = $1,
-          profile_picture = $2,
-          notes = $3,
-          remark = $4,
-          updated_by = $5,
+          email = $2,
+          profile_picture = $3,
+          notes = $4,
+          remark = $5,
+          updated_by = $6,
           updated_at = NOW()
-        WHERE customer_id = $6
+        WHERE customer_id = $7
       `,
       [
         parsed.data.displayName,
+        parsed.data.email,
         parsed.data.profilePicture || null,
         JSON.stringify(mergedNotes),
         REFERRAL_MARKER,
-        referrer.customerId,
+        APP_ACTOR,
         referrer.customerId,
       ],
     );
@@ -625,30 +696,16 @@ export async function updateReferrerProfile(
 export async function listReferralsByReferrer(referrerCustomerId: string): Promise<ReferralRow[]> {
   const capabilities = await getCustomerCapabilities({ query });
   const projectTypeSelect = capabilities.hasReferralProjectType ? "r.project_type" : "NULL::text AS project_type";
-  const preferredAgentIdSelect = capabilities.hasReferralLinkedAgent
-    ? "r.linked_agent AS preferred_agent_id"
-    : "NULL::text AS preferred_agent_id";
-  const preferredAgentNameSelect =
-    capabilities.hasReferralLinkedAgent && capabilities.hasUserTable
-      ? "preferred_agent.name AS preferred_agent_name"
-      : "NULL::text AS preferred_agent_name";
-  const preferredAgentJoin =
-    capabilities.hasReferralLinkedAgent && capabilities.hasUserTable
-      ? 'LEFT JOIN "user" preferred_agent ON preferred_agent.id::text = r.linked_agent'
-      : "";
-  const assignedAgentIdSelect = capabilities.hasReferralAssignedAgent
-    ? capabilities.hasUserTable
-      ? "COALESCE(assigned_agent.id::text, r.assigned_agent) AS assigned_agent_id"
-      : "r.assigned_agent AS assigned_agent_id"
-    : "NULL::text AS assigned_agent_id";
-  const assignedAgentNameSelect =
-    capabilities.hasReferralAssignedAgent && capabilities.hasUserTable
-      ? "assigned_agent.name AS assigned_agent_name"
-      : "NULL::text AS assigned_agent_name";
-  const assignedAgentJoin =
-    capabilities.hasReferralAssignedAgent && capabilities.hasUserTable
-      ? assignedUserJoin("r.assigned_agent", "assigned_agent")
-      : "";
+  const preferredAgentIdSelect = salesUserIdSelect(capabilities, "r.linked_agent", "preferred_agent_id", "preferred_agent", capabilities.hasReferralLinkedAgent);
+  const preferredAgentNameSelect = salesUserNameSelect(capabilities, "preferred_agent_name", "preferred_agent", capabilities.hasReferralLinkedAgent);
+  const preferredAgentJoin = capabilities.hasReferralLinkedAgent
+    ? salesUserJoin(capabilities, "r.linked_agent", "preferred_agent")
+    : "";
+  const assignedAgentIdSelect = salesUserIdSelect(capabilities, "r.assigned_agent", "assigned_agent_id", "assigned_agent", capabilities.hasReferralAssignedAgent);
+  const assignedAgentNameSelect = salesUserNameSelect(capabilities, "assigned_agent_name", "assigned_agent", capabilities.hasReferralAssignedAgent);
+  const assignedAgentJoin = capabilities.hasReferralAssignedAgent
+    ? salesUserJoin(capabilities, "r.assigned_agent", "assigned_agent")
+    : "";
 
   const result = await query<{
     id: number;
@@ -736,30 +793,16 @@ export async function listReferralsByReferrer(referrerCustomerId: string): Promi
 export async function listManagerReferralLeads(filters: ManagerReferralFilters = {}): Promise<ManagerReferralRow[]> {
   const capabilities = await getCustomerCapabilities({ query });
   const projectTypeSelect = capabilities.hasReferralProjectType ? "r.project_type" : "NULL::text AS project_type";
-  const preferredAgentIdSelect = capabilities.hasReferralLinkedAgent
-    ? "r.linked_agent AS preferred_agent_id"
-    : "NULL::text AS preferred_agent_id";
-  const preferredAgentNameSelect =
-    capabilities.hasReferralLinkedAgent && capabilities.hasUserTable
-      ? "preferred_agent.name AS preferred_agent_name"
-      : "NULL::text AS preferred_agent_name";
-  const preferredAgentJoin =
-    capabilities.hasReferralLinkedAgent && capabilities.hasUserTable
-      ? 'LEFT JOIN "user" preferred_agent ON preferred_agent.id::text = r.linked_agent'
-      : "";
-  const assignedAgentIdSelect = capabilities.hasReferralAssignedAgent
-    ? capabilities.hasUserTable
-      ? "COALESCE(assigned_agent.id::text, r.assigned_agent) AS assigned_agent_id"
-      : "r.assigned_agent AS assigned_agent_id"
-    : "NULL::text AS assigned_agent_id";
-  const assignedAgentNameSelect =
-    capabilities.hasReferralAssignedAgent && capabilities.hasUserTable
-      ? "assigned_agent.name AS assigned_agent_name"
-      : "NULL::text AS assigned_agent_name";
-  const assignedAgentJoin =
-    capabilities.hasReferralAssignedAgent && capabilities.hasUserTable
-      ? assignedUserJoin("r.assigned_agent", "assigned_agent")
-      : "";
+  const preferredAgentIdSelect = salesUserIdSelect(capabilities, "r.linked_agent", "preferred_agent_id", "preferred_agent", capabilities.hasReferralLinkedAgent);
+  const preferredAgentNameSelect = salesUserNameSelect(capabilities, "preferred_agent_name", "preferred_agent", capabilities.hasReferralLinkedAgent);
+  const preferredAgentJoin = capabilities.hasReferralLinkedAgent
+    ? salesUserJoin(capabilities, "r.linked_agent", "preferred_agent")
+    : "";
+  const assignedAgentIdSelect = salesUserIdSelect(capabilities, "r.assigned_agent", "assigned_agent_id", "assigned_agent", capabilities.hasReferralAssignedAgent);
+  const assignedAgentNameSelect = salesUserNameSelect(capabilities, "assigned_agent_name", "assigned_agent", capabilities.hasReferralAssignedAgent);
+  const assignedAgentJoin = capabilities.hasReferralAssignedAgent
+    ? salesUserJoin(capabilities, "r.assigned_agent", "assigned_agent")
+    : "";
 
   const whereClauses: string[] = [];
   const values: unknown[] = [];
@@ -783,18 +826,34 @@ export async function listManagerReferralLeads(filters: ManagerReferralFilters =
 
   if (filters.preferredAgentId?.trim() && capabilities.hasReferralLinkedAgent) {
     values.push(filters.preferredAgentId.trim());
-    whereClauses.push(`r.linked_agent = $${values.length}`);
+    whereClauses.push(salesUserMatchSql("r.linked_agent", values.length));
   }
 
   if (filters.assignedAgentId?.trim()) {
     if (capabilities.hasReferralAssignedAgent) {
       values.push(filters.assignedAgentId.trim());
-      whereClauses.push(capabilities.hasUserTable
-        ? assignedUserMatch("r.assigned_agent", values.length)
-        : `r.assigned_agent = $${values.length}`);
+      whereClauses.push(salesUserMatchSql("r.assigned_agent", values.length));
     } else {
       whereClauses.push("FALSE");
     }
+  }
+
+  if ((filters.salesUserBubbleId?.trim() || filters.salesUserId?.trim()) && capabilities.hasReferralAssignedAgent) {
+    const salesUserMatches: string[] = [];
+
+    if (filters.salesUserBubbleId?.trim()) {
+      values.push(filters.salesUserBubbleId.trim());
+      salesUserMatches.push(salesUserMatchSql("r.assigned_agent", values.length));
+    }
+
+    if (filters.salesUserId?.trim()) {
+      values.push(filters.salesUserId.trim());
+      salesUserMatches.push(salesUserMatchSql("r.assigned_agent", values.length));
+    }
+
+    whereClauses.push(`(${salesUserMatches.join(" OR ")})`);
+  } else if (filters.salesUserBubbleId?.trim() || filters.salesUserId?.trim()) {
+    whereClauses.push("FALSE");
   }
 
   if (filters.search?.trim()) {
@@ -864,9 +923,13 @@ export async function listManagerReferralLeads(filters: ManagerReferralFilters =
   return result.rows.map((row) => mapReferralRow(row));
 }
 
-export async function listAssignedReferrals(agentId: string): Promise<ManagerReferralRow[]> {
+export async function listAssignedReferrals(salesUser: {
+  bubbleId: string;
+  userId: string;
+}): Promise<ManagerReferralRow[]> {
   return listManagerReferralLeads({
-    assignedAgentId: agentId,
+    salesUserBubbleId: salesUser.bubbleId,
+    salesUserId: salesUser.userId,
   });
 }
 
@@ -878,21 +941,23 @@ export async function listAgentOptions(): Promise<AgentOption[]> {
   }
 
   const result = await query<{
-    id: number;
+    bubble_id: string | null;
     name: string | null;
   }>(
     `
-      SELECT u.id, u.name
+      SELECT u.bubble_id, u.name
       FROM "user" u
       WHERE u.name IS NOT NULL
         AND BTRIM(u.name) <> ''
+        AND u.bubble_id IS NOT NULL
+        AND BTRIM(u.bubble_id) <> ''
         ${capabilities.hasUserAccessLevel ? "AND EXISTS (SELECT 1 FROM unnest(u.access_level) AS x WHERE LOWER(x) LIKE '%sales%')" : ""}
       ORDER BY u.name ASC
     `,
   );
 
   return result.rows.map((row) => ({
-    id: String(row.id),
+    id: row.bubble_id!.trim(),
     name: row.name!.trim(),
   }));
 }
@@ -997,11 +1062,6 @@ export async function createReferral(
     if (capabilities.hasReferralLinkedAgent) {
       referralColumns.push("linked_agent");
       referralValues.push(preferredAgentId);
-    }
-
-    if (capabilities.hasReferralAssignedAgent) {
-      referralColumns.push("assigned_agent");
-      referralValues.push(null);
     }
 
     if (capabilities.hasReferralLeadState) {
@@ -1296,7 +1356,7 @@ export async function updateReferralManagerWorkflow(
     const capabilities = await getCustomerCapabilities(client);
 
     if (!capabilities.hasReferralAssignedAgent) {
-      throw new ReferralError("Referral assignment columns are not available yet. Run the latest migration first.");
+      throw new ReferralError("Referral assignment column is not available yet. Run the latest migration first.");
     }
 
     const assignedAgentId = await normalizeAgentId(client, parsed.data.assignedAgentId, "Assigned agent");

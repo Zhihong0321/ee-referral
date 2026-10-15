@@ -2,14 +2,9 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 
 import { toCanonicalMalaysiaPhone } from "./phone-normalization.ts";
-import { PROJECT_TYPE_OPTIONS, RELATIONSHIP_OPTIONS } from "./referral-options.ts";
+import { normalizeAdSourceName, PROJECT_TYPE_OPTIONS, RELATIONSHIP_OPTIONS } from "./referral-options.ts";
 
-const sourceNameSchema = z.string().trim().min(2).max(120).transform((value) => {
-  const name = value.replace(/\s+/g, " ");
-  if (name.toLowerCase() === "google ads") return "Google Ads";
-  if (name.toLowerCase() === "facebook ads") return "Facebook Ads";
-  return name;
-});
+const sourceNameSchema = z.string().trim().min(2).max(120).transform(normalizeAdSourceName);
 
 export const leadApiInputSchema = z.strictObject({
   leadName: z.string().trim().min(2).max(120),
@@ -44,6 +39,20 @@ export type CreatedApiLead = {
   status: "Pending" | "Assigned";
 };
 
+export type ApiAgentOption = {
+  id: string;
+  name: string;
+  bubbleId: string;
+  numericId: number;
+  accessLevels: string[];
+};
+
+export type ApiLeadSource = {
+  id: string;
+  name: string;
+  type: "ads" | "other";
+};
+
 export class LeadApiError extends Error {
   readonly status: number;
   readonly code: string;
@@ -63,6 +72,88 @@ export function leadSourceCustomerId(name: string) {
   return `src_${createHash("sha256").update(key).digest("hex").slice(0, 24)}`;
 }
 
+export function authenticateLeadApiKey(request: Request, expectedKey: string | undefined): Response | null {
+  const json = (body: unknown, status: number) => Response.json(body, {
+    status,
+    headers: { "Cache-Control": "no-store" },
+  });
+
+  if (!expectedKey) {
+    return json({ error: "The lead API is not configured on this server.", code: "API_NOT_CONFIGURED" }, 503);
+  }
+
+  const authHeader = request.headers.get("authorization") || "";
+  const match = authHeader.match(/^Bearer\s+(.+)$/i);
+  const bearerKey = match ? match[1].trim() : "";
+  if (!bearerKey) {
+    return json({ error: "Missing or invalid Authorization header. Send Bearer <LEADS_API_KEY>.", code: "UNAUTHORIZED" }, 401);
+  }
+
+  const expectedBuffer = createHash("sha256").update(expectedKey).digest();
+  const actualBuffer = createHash("sha256").update(bearerKey).digest();
+  if (!timingSafeEqual(expectedBuffer, actualBuffer)) {
+    return json({ error: "Invalid API key.", code: "UNAUTHORIZED" }, 401);
+  }
+
+  return null;
+}
+
+export function createListAgentsApiHandler(dependencies: {
+  getApiKey: () => string | undefined;
+  listAgents: () => Promise<ApiAgentOption[]>;
+}) {
+  const json = (body: unknown, status: number) => Response.json(body, {
+    status,
+    headers: { "Cache-Control": "no-store" },
+  });
+
+  return async function GET(request: Request) {
+    const authError = authenticateLeadApiKey(request, dependencies.getApiKey());
+    if (authError) return authError;
+
+    try {
+      const agents = await dependencies.listAgents();
+      return json({ agents }, 200);
+    } catch (error) {
+      if (error instanceof LeadApiError) {
+        return json({ error: error.message, code: error.code }, error.status);
+      }
+      console.error("[lead-api] Failed to list agents.", {
+        name: error instanceof Error ? error.name : "UnknownError",
+      });
+      return json({ error: "Unable to retrieve agents right now.", code: "INTERNAL_ERROR" }, 500);
+    }
+  };
+}
+
+export function createListSourcesApiHandler(dependencies: {
+  getApiKey: () => string | undefined;
+  listSources: () => Promise<ApiLeadSource[]>;
+}) {
+  const json = (body: unknown, status: number) => Response.json(body, {
+    status,
+    headers: { "Cache-Control": "no-store" },
+  });
+
+  return async function GET(request: Request) {
+    const authError = authenticateLeadApiKey(request, dependencies.getApiKey());
+    if (authError) return authError;
+
+    try {
+      const sources = await dependencies.listSources();
+      return json({ sources, ads: sources.filter((s) => s.type === "ads") }, 200);
+    } catch (error) {
+      if (error instanceof LeadApiError) {
+        return json({ error: error.message, code: error.code }, error.status);
+      }
+      console.error("[lead-api] Failed to list sources.", {
+        name: error instanceof Error ? error.name : "UnknownError",
+      });
+      return json({ error: "Unable to retrieve lead sources right now.", code: "INTERNAL_ERROR" }, 500);
+    }
+  };
+}
+
 export function createLeadApiHandler(dependencies: {
   getApiKey: () => string | undefined;
   createLead: (input: LeadApiInput) => Promise<CreatedApiLead>;
@@ -73,16 +164,8 @@ export function createLeadApiHandler(dependencies: {
   });
 
   return async function POST(request: Request) {
-    const expected = dependencies.getApiKey()?.trim();
-    if (!expected) {
-      return json({ error: "Lead API is not configured.", code: "API_NOT_CONFIGURED" }, 503);
-    }
-
-    const token = /^Bearer\s+(\S+)$/i.exec(request.headers.get("authorization") || "")?.[1];
-    const digest = (value: string) => createHash("sha256").update(value).digest();
-    if (!token || !timingSafeEqual(digest(token), digest(expected))) {
-      return json({ error: "Invalid or missing API key.", code: "UNAUTHORIZED" }, 401);
-    }
+    const authError = authenticateLeadApiKey(request, dependencies.getApiKey());
+    if (authError) return authError;
 
     const contentType = request.headers.get("content-type")?.split(";")[0].trim().toLowerCase();
     if (contentType !== "application/json") {
@@ -99,23 +182,23 @@ export function createLeadApiHandler(dependencies: {
     const parsed = leadApiInputSchema.safeParse(body);
     if (!parsed.success) {
       return json({
-        error: "Invalid lead details.",
+        error: "Invalid lead payload.",
         code: "INVALID_INPUT",
-        issues: parsed.error.issues.map((issue) => ({ field: issue.path.join("."), message: issue.message })),
+        issues: parsed.error.issues.map((issue) => ({ path: issue.path.join("."), message: issue.message })),
       }, 400);
     }
 
     try {
-      return json({ lead: await dependencies.createLead(parsed.data) }, 201);
+      const created = await dependencies.createLead(parsed.data);
+      return json({ lead: created }, 201);
     } catch (error) {
       if (error instanceof LeadApiError) {
         return json({ error: error.message, code: error.code }, error.status);
       }
-      // Do not return database errors or log request bodies containing lead data.
       console.error("[lead-api] Lead creation failed.", {
         name: error instanceof Error ? error.name : "UnknownError",
       });
-      return json({ error: "Unable to create the lead right now.", code: "INTERNAL_ERROR" }, 500);
+      return json({ error: "Unable to create lead right now.", code: "INTERNAL_ERROR" }, 500);
     }
   };
 }
