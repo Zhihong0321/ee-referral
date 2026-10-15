@@ -58,6 +58,14 @@ Required:
 - `APP_BASE_URL`
 - `AUTH_HUB_URL` (default: `https://auth.atap.solar`)
 
+## Lead API and public documentation
+
+`POST /api/leads` creates a lead from an advertising source or existing referrer
+and optionally assigns it to a sales user. Configure `LEADS_API_KEY` and send it
+as a bearer token. Public documentation is served at `/api-docs` without login and linked
+from the homepage. See [API requests, configuration, and responses](docs/lead-api.md)
+for integration and server setup details.
+
 ## Run
 
 ```bash

@@ -4,6 +4,7 @@ import type { PoolClient, QueryResultRow } from "pg";
 import type { AuthHubUser } from "@/lib/auth";
 import { type ActivityLogActor, writeActivityLog } from "@/lib/activity-log";
 import { getPool, query } from "@/lib/db";
+import { assignedUserJoin, assignedUserMatch } from "@/lib/referral-agent-sql";
 
 const REFERRAL_MARKER = "REFERRAL_ACCOUNT";
 const LEGACY_REFERRER_MARKER = "REFERRER_ACCOUNT";
@@ -636,7 +637,9 @@ export async function listReferralsByReferrer(referrerCustomerId: string): Promi
       ? 'LEFT JOIN "user" preferred_agent ON preferred_agent.id::text = r.linked_agent'
       : "";
   const assignedAgentIdSelect = capabilities.hasReferralAssignedAgent
-    ? "r.assigned_agent AS assigned_agent_id"
+    ? capabilities.hasUserTable
+      ? "COALESCE(assigned_agent.id::text, r.assigned_agent) AS assigned_agent_id"
+      : "r.assigned_agent AS assigned_agent_id"
     : "NULL::text AS assigned_agent_id";
   const assignedAgentNameSelect =
     capabilities.hasReferralAssignedAgent && capabilities.hasUserTable
@@ -644,7 +647,7 @@ export async function listReferralsByReferrer(referrerCustomerId: string): Promi
       : "NULL::text AS assigned_agent_name";
   const assignedAgentJoin =
     capabilities.hasReferralAssignedAgent && capabilities.hasUserTable
-      ? 'LEFT JOIN "user" assigned_agent ON assigned_agent.id::text = r.assigned_agent'
+      ? assignedUserJoin("r.assigned_agent", "assigned_agent")
       : "";
 
   const result = await query<{
@@ -745,7 +748,9 @@ export async function listManagerReferralLeads(filters: ManagerReferralFilters =
       ? 'LEFT JOIN "user" preferred_agent ON preferred_agent.id::text = r.linked_agent'
       : "";
   const assignedAgentIdSelect = capabilities.hasReferralAssignedAgent
-    ? "r.assigned_agent AS assigned_agent_id"
+    ? capabilities.hasUserTable
+      ? "COALESCE(assigned_agent.id::text, r.assigned_agent) AS assigned_agent_id"
+      : "r.assigned_agent AS assigned_agent_id"
     : "NULL::text AS assigned_agent_id";
   const assignedAgentNameSelect =
     capabilities.hasReferralAssignedAgent && capabilities.hasUserTable
@@ -753,7 +758,7 @@ export async function listManagerReferralLeads(filters: ManagerReferralFilters =
       : "NULL::text AS assigned_agent_name";
   const assignedAgentJoin =
     capabilities.hasReferralAssignedAgent && capabilities.hasUserTable
-      ? 'LEFT JOIN "user" assigned_agent ON assigned_agent.id::text = r.assigned_agent'
+      ? assignedUserJoin("r.assigned_agent", "assigned_agent")
       : "";
 
   const whereClauses: string[] = [];
@@ -784,7 +789,9 @@ export async function listManagerReferralLeads(filters: ManagerReferralFilters =
   if (filters.assignedAgentId?.trim()) {
     if (capabilities.hasReferralAssignedAgent) {
       values.push(filters.assignedAgentId.trim());
-      whereClauses.push(`r.assigned_agent = $${values.length}`);
+      whereClauses.push(capabilities.hasUserTable
+        ? assignedUserMatch("r.assigned_agent", values.length)
+        : `r.assigned_agent = $${values.length}`);
     } else {
       whereClauses.push("FALSE");
     }

@@ -102,6 +102,10 @@ export default function Home() {
           dispute, cancellation, duplicate claim, or invalid referral information.
         </p>
       </section>
+      <footer className="mt-8 flex flex-wrap items-center justify-between gap-3 text-sm text-slate-600">
+        <span>Eternalgy Referral Program</span>
+        <Link href="/api-docs" className="font-semibold text-teal-800 hover:underline">API documentation</Link>
+      </footer>
     </main>
   );
 }
