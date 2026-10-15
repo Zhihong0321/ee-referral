@@ -164,6 +164,7 @@ export async function updateProfileAction(formData: FormData) {
 
     await updateReferrerProfile(referrer, {
       displayName: String(formData.get("displayName") ?? ""),
+      email: String(formData.get("email") ?? ""),
       profilePicture: String(formData.get("profilePicture") ?? ""),
       bankAccount: String(formData.get("bankAccount") ?? ""),
       bankerName: String(formData.get("bankerName") ?? ""),

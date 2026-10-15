@@ -28,6 +28,7 @@ export type WebchatProfileForm = {
   phone: string;
   values: {
     name: string;
+    email: string;
     bankName: string;
     bankAccount: string;
     icNumber: string;
@@ -48,6 +49,7 @@ export type AddLeadSubmission = {
 
 export type ProfileSubmission = {
   name: string;
+  email: string;
   bankName: string;
   bankAccount: string;
   icNumber: string;
@@ -63,6 +65,7 @@ export const MAX_LEAD_NAME = 200;
 export const MAX_AREA = 200;
 export const MAX_REMARK = 500;
 export const MAX_REFERRER_NAME = 120;
+export const MAX_EMAIL = 254;
 export const MAX_BANK_NAME = 100;
 export const MAX_BANK_ACCOUNT = 80;
 export const MAX_IC_NUMBER = 40;
@@ -96,13 +99,13 @@ export function validateAddLeadSubmission(
 
   const leadName = text(input.leadName, MAX_LEAD_NAME);
   if (!leadName) {
-    errors.leadName = "Enter the lead's name.";
+    errors.leadName = "Enter the name of the lead (potential contact).";
   }
 
   const rawPhone = typeof input.leadMobileNumber === "string" ? input.leadMobileNumber : "";
   const leadMobileNumber = options.canonicalize(rawPhone);
   if (!rawPhone.trim()) {
-    errors.leadMobileNumber = "Enter the lead's phone number.";
+    errors.leadMobileNumber = "Enter the phone number of the lead (potential contact).";
   } else if (!isPlausibleMalaysiaMobile(leadMobileNumber)) {
     errors.leadMobileNumber = "That doesn't look like a valid phone number, e.g. 012-345 6789.";
   }
@@ -138,6 +141,13 @@ export function validateProfileSubmission(
     errors.name = "Enter your name.";
   }
 
+  const email = text(input.email, MAX_EMAIL);
+  if (!email) {
+    errors.email = "Enter your email address.";
+  } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    errors.email = "Enter a valid email address.";
+  }
+
   const bankName = text(input.bankName, MAX_BANK_NAME);
   if (!bankName) {
     errors.bankName = "Enter your bank name.";
@@ -171,5 +181,5 @@ export function validateProfileSubmission(
     return { ok: false, errors };
   }
 
-  return { ok: true, value: { name, bankName, bankAccount, icNumber, tin, address } };
+  return { ok: true, value: { name, email, bankName, bankAccount, icNumber, tin, address } };
 }

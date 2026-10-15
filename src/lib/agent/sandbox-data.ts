@@ -20,6 +20,7 @@ type ProxyReferrerRow = {
   customer_id: string;
   name: string | null;
   phone: string | null;
+  email: string | null;
   profile_picture: string | null;
   notes: string | null;
   remark: string | null;
@@ -90,6 +91,7 @@ function buildReferrerAccount(row: ProxyReferrerRow, fallbackPhone: string): Ref
     customerId: row.customer_id,
     name: row.name?.trim() || REFERRAL_ACCOUNT_NAME,
     phone: row.phone?.trim() || fallbackPhone,
+    email: row.email?.trim() || "",
     profilePicture: row.profile_picture,
     bankAccount: typeof noteData.bankAccount === "string" ? noteData.bankAccount : "",
     bankerName: typeof noteData.bankerName === "string" ? noteData.bankerName : "",
@@ -185,7 +187,7 @@ export async function getSandboxReferrerByPhone(phoneInput: string): Promise<Ref
 
   const rows = await runProxySql<ProxyReferrerRow>(
     `
-      SELECT customer_id, name, phone, profile_picture, notes, remark
+      SELECT customer_id, name, phone, email, profile_picture, notes, remark
       FROM customer
       WHERE phone = $1
         AND remark IN ($2, $3)
@@ -229,7 +231,7 @@ export async function ensureSandboxReferrerByPhone(phoneInput: string): Promise<
   const rows = await runProxySql<ProxyReferrerRow>(
     `
       WITH existing AS (
-        SELECT customer_id, name, phone, profile_picture, notes, remark
+        SELECT customer_id, name, phone, email, profile_picture, notes, remark
         FROM customer
         WHERE phone = $1
           AND remark IN ($2, $3)
@@ -249,11 +251,11 @@ export async function ensureSandboxReferrerByPhone(phoneInput: string): Promise<
         )
         SELECT $4, $5, $1, 'other', $2, $6, $7, $7
         WHERE NOT EXISTS (SELECT 1 FROM existing)
-        RETURNING customer_id, name, phone, profile_picture, notes, remark
+        RETURNING customer_id, name, phone, email, profile_picture, notes, remark
       )
-      SELECT customer_id, name, phone, profile_picture, notes, remark FROM existing
+      SELECT customer_id, name, phone, email, profile_picture, notes, remark FROM existing
       UNION ALL
-      SELECT customer_id, name, phone, profile_picture, notes, remark FROM inserted
+      SELECT customer_id, name, phone, email, profile_picture, notes, remark FROM inserted
       LIMIT 1
     `,
     [phone, REFERRAL_MARKER, LEGACY_REFERRER_MARKER, generatedCustomerId, REFERRAL_ACCOUNT_NAME, notes, APP_ACTOR],
@@ -290,7 +292,17 @@ export async function listSandboxReferralsByReferrer(referrerCustomerId: string)
         c.notes AS lead_notes
       FROM referral r
       LEFT JOIN customer c ON c.customer_id = r.linked_invoice
-      LEFT JOIN "user" preferred_agent ON preferred_agent.id::text = r.linked_agent
+      LEFT JOIN LATERAL (
+        SELECT u.name
+        FROM "user" u
+        WHERE u.bubble_id = NULLIF(BTRIM(r.linked_agent), '')
+           OR (
+             NULLIF(BTRIM(r.linked_agent), '') ~ '^[0-9]+$'
+             AND u.id = NULLIF(BTRIM(r.linked_agent), '')::bigint
+           )
+        ORDER BY CASE WHEN u.bubble_id = NULLIF(BTRIM(r.linked_agent), '') THEN 0 ELSE 1 END, u.id
+        LIMIT 1
+      ) preferred_agent ON TRUE
       WHERE r.linked_customer_profile = $1
       ORDER BY r.created_at DESC NULLS LAST, r.id DESC
     `,
@@ -306,6 +318,20 @@ export async function createSandboxReferral(input: LeadCreateInput): Promise<{ r
   }
 
   const referrer = await ensureSandboxReferrerByPhone(input.phone);
+  const preferredAgentRows = input.preferredAgentId?.trim()
+    ? await runProxySql<{ bubble_id: string | null }>(
+        `
+          SELECT u.bubble_id
+          FROM "user" u
+          WHERE u.bubble_id = $1
+             OR ($1 ~ '^[0-9]+$' AND u.id = $1::bigint)
+          ORDER BY CASE WHEN u.bubble_id = $1 THEN 0 ELSE 1 END, u.id
+          LIMIT 1
+        `,
+        [input.preferredAgentId.trim()],
+      )
+    : [];
+  const preferredAgentId = preferredAgentRows[0]?.bubble_id?.trim() || "";
   const leadCustomerId = randomId("cust");
   const referralBubbleId = randomId("reflead");
   const metadata = JSON.stringify({
@@ -314,7 +340,7 @@ export async function createSandboxReferral(input: LeadCreateInput): Promise<{ r
     leadState: input.leadState,
     leadCity: input.leadCity,
     leadAddress: input.leadAddress,
-    preferredAgentId: input.preferredAgentId || "",
+    preferredAgentId,
     linkedReferrer: referrer.customerId,
     syncedFromReferralPortal: true,
     remark: input.remark,
@@ -378,7 +404,7 @@ export async function createSandboxReferral(input: LeadCreateInput): Promise<{ r
       referralBubbleId,
       referrer.customerId,
       input.projectType,
-      input.preferredAgentId,
+      preferredAgentId,
     ],
   );
 

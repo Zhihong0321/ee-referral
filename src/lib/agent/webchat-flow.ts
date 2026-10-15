@@ -59,7 +59,7 @@ export async function buildAddLeadForm(canonicalPhone: string): Promise<StepResu
   };
 
   return {
-    reply: "Fill in the lead's details below and tap Submit.",
+    reply: "Fill in the details of the lead (potential contact) below and tap Submit.",
     nextState: { step: "add_form" },
     form,
   };
@@ -77,6 +77,7 @@ export async function buildProfileForm(canonicalPhone: string): Promise<StepResu
       // boilerplate. Anyone who already has a real name keeps it prefilled,
       // whether or not their bank details are on file yet.
       name: referrer.name === REFERRAL_ACCOUNT_NAME ? "" : referrer.name,
+      email: referrer.email,
       bankName: referrer.bankName,
       bankAccount: referrer.bankAccount,
       icNumber: referrer.icNumber,
@@ -86,7 +87,7 @@ export async function buildProfileForm(canonicalPhone: string): Promise<StepResu
   };
 
   return {
-    reply: "Update your referrer details below and tap Save.",
+    reply: "Update your referrer (introducer) details below and tap Save.",
     nextState: { step: "profile_form" },
     form,
   };
@@ -95,7 +96,7 @@ export async function buildProfileForm(canonicalPhone: string): Promise<StepResu
 async function handleCheckLead(canonicalPhone: string): Promise<StepResult> {
   const leads = await listWhatsappReferralsByReferrerPhone(canonicalPhone);
   const lines = formatLeadStateLines(leads);
-  const reply = `Here are your leads:\n${lines.join("\n")}\n\n${MENU_TEXT}`;
+  const reply = `Here are your leads (potential contacts):\n${lines.join("\n")}\n\n${MENU_TEXT}`;
   return { reply, nextState: EMPTY_WEBCHAT_MENU_STATE };
 }
 
@@ -104,7 +105,7 @@ async function beginEditLead(canonicalPhone: string): Promise<StepResult> {
 
   if (leads.length === 0) {
     return {
-      reply: `You have no leads yet.\n\n${MENU_TEXT}`,
+      reply: `You have no leads (potential contacts) yet.\n\n${MENU_TEXT}`,
       nextState: EMPTY_WEBCHAT_MENU_STATE,
     };
   }
@@ -113,7 +114,7 @@ async function beginEditLead(canonicalPhone: string): Promise<StepResult> {
   const pickList = leads.map((lead) => ({ referralId: lead.id, label: lead.leadName || `Lead #${lead.id}` }));
 
   return {
-    reply: `Which lead would you like to edit?\n${lines.join("\n")}\n\nReply with the lead number.`,
+    reply: `Which lead (potential contact) would you like to edit?\n${lines.join("\n")}\n\nReply with the lead (potential contact) number.`,
     nextState: { step: "edit_pick_lead", leads: pickList },
   };
 }
@@ -206,7 +207,7 @@ async function handleEditConfirm(
   await updateWhatsappReferral(referrer, { referralId: state.referralId, field: state.field, value: state.value });
 
   return {
-    reply: `Lead "${state.leadLabel}" updated.\n\n${MENU_TEXT}`,
+    reply: `Lead (potential contact) "${state.leadLabel}" updated.\n\n${MENU_TEXT}`,
     nextState: EMPTY_WEBCHAT_MENU_STATE,
   };
 }

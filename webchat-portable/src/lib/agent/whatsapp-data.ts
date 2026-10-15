@@ -512,18 +512,22 @@ export async function listWhatsappAgents(): Promise<WhatsappAgentOption[]> {
     ? "AND EXISTS (SELECT 1 FROM unnest(u.access_level) AS x WHERE LOWER(x) LIKE '%sales%')"
     : "";
 
-  const rows = await runWhatsappAgentSql<{ id: number; name: string | null }>(
+  const rows = await runWhatsappAgentSql<{ bubble_id: string | null; name: string | null }>(
     `
-      SELECT u.id, u.name
+      SELECT u.bubble_id, u.name
       FROM "user" u
       WHERE u.name IS NOT NULL
         AND BTRIM(u.name) <> ''
+        AND u.bubble_id IS NOT NULL
+        AND BTRIM(u.bubble_id) <> ''
         ${salesFilter}
       ORDER BY u.name ASC
     `,
   );
 
-  return rows.map((row) => ({ id: String(row.id), name: (row.name || "").trim() })).filter((agent) => agent.name);
+  return rows
+    .map((row) => ({ id: (row.bubble_id || "").trim(), name: (row.name || "").trim() }))
+    .filter((agent) => agent.id && agent.name);
 }
 
 // Look up an agent's WhatsApp contact number (user.contact) and normalize it to
@@ -532,7 +536,14 @@ export async function getWhatsappAgentContact(agentId: string): Promise<string> 
   const id = (agentId || "").trim();
   if (!id) return "";
   const rows = await runWhatsappAgentSql<{ contact: string | null }>(
-    `SELECT contact FROM "user" WHERE id::text = $1 LIMIT 1`,
+    `
+      SELECT contact
+      FROM "user"
+      WHERE bubble_id = $1
+         OR ($1 ~ '^[0-9]+$' AND id = $1::bigint)
+      ORDER BY CASE WHEN bubble_id = $1 THEN 0 ELSE 1 END, id
+      LIMIT 1
+    `,
     [id],
   );
   return toCanonicalMalaysiaPhone(rows[0]?.contact || "");
@@ -604,7 +615,14 @@ async function sendPreferredAgentNotificationForReferral(
         FROM referral r
         LEFT JOIN customer lead_customer ON lead_customer.customer_id = r.linked_invoice
         LEFT JOIN customer referrer ON referrer.customer_id = r.linked_customer_profile
-        LEFT JOIN "user" preferred_agent ON preferred_agent.id::text = $2
+        LEFT JOIN LATERAL (
+          SELECT u.name
+          FROM "user" u
+          WHERE u.bubble_id = $2
+             OR ($2 ~ '^[0-9]+$' AND u.id = $2::bigint)
+          ORDER BY CASE WHEN u.bubble_id = $2 THEN 0 ELSE 1 END, u.id
+          LIMIT 1
+        ) preferred_agent ON TRUE
         WHERE r.id = $1
         LIMIT 1
       `,
@@ -1031,7 +1049,17 @@ export async function listWhatsappReferrals(referrerCustomerId: string) {
         c.notes AS lead_notes
       FROM referral r
       LEFT JOIN customer c ON c.customer_id = r.linked_invoice
-      LEFT JOIN "user" preferred_agent ON preferred_agent.id::text = r.linked_agent
+      LEFT JOIN LATERAL (
+        SELECT u.name
+        FROM "user" u
+        WHERE u.bubble_id = NULLIF(BTRIM(r.linked_agent), '')
+           OR (
+             NULLIF(BTRIM(r.linked_agent), '') ~ '^[0-9]+$'
+             AND u.id = NULLIF(BTRIM(r.linked_agent), '')::bigint
+           )
+        ORDER BY CASE WHEN u.bubble_id = NULLIF(BTRIM(r.linked_agent), '') THEN 0 ELSE 1 END, u.id
+        LIMIT 1
+      ) preferred_agent ON TRUE
       WHERE r.linked_customer_profile = $1
       ORDER BY r.created_at DESC NULLS LAST, r.id DESC
     `,
@@ -1069,7 +1097,17 @@ export async function listAllWhatsappReferrals(limit = 30) {
       FROM referral r
       LEFT JOIN customer c ON c.customer_id = r.linked_invoice
       LEFT JOIN customer referrer ON referrer.customer_id = r.linked_customer_profile
-      LEFT JOIN "user" preferred_agent ON preferred_agent.id::text = r.linked_agent
+      LEFT JOIN LATERAL (
+        SELECT u.name
+        FROM "user" u
+        WHERE u.bubble_id = NULLIF(BTRIM(r.linked_agent), '')
+           OR (
+             NULLIF(BTRIM(r.linked_agent), '') ~ '^[0-9]+$'
+             AND u.id = NULLIF(BTRIM(r.linked_agent), '')::bigint
+           )
+        ORDER BY CASE WHEN u.bubble_id = NULLIF(BTRIM(r.linked_agent), '') THEN 0 ELSE 1 END, u.id
+        LIMIT 1
+      ) preferred_agent ON TRUE
       ORDER BY r.created_at DESC NULLS LAST, r.id DESC
       LIMIT $1
     `,
@@ -1118,7 +1156,17 @@ export async function listWhatsappReferralsByReferrerPhone(phone: string, limit 
       FROM matched_referrer
       JOIN referral r ON r.linked_customer_profile = matched_referrer.customer_id
       LEFT JOIN customer c ON c.customer_id = r.linked_invoice
-      LEFT JOIN "user" preferred_agent ON preferred_agent.id::text = r.linked_agent
+      LEFT JOIN LATERAL (
+        SELECT u.name
+        FROM "user" u
+        WHERE u.bubble_id = NULLIF(BTRIM(r.linked_agent), '')
+           OR (
+             NULLIF(BTRIM(r.linked_agent), '') ~ '^[0-9]+$'
+             AND u.id = NULLIF(BTRIM(r.linked_agent), '')::bigint
+           )
+        ORDER BY CASE WHEN u.bubble_id = NULLIF(BTRIM(r.linked_agent), '') THEN 0 ELSE 1 END, u.id
+        LIMIT 1
+      ) preferred_agent ON TRUE
       ORDER BY r.created_at DESC NULLS LAST, r.id DESC
       LIMIT $4
     `,
@@ -1128,6 +1176,25 @@ export async function listWhatsappReferralsByReferrerPhone(phone: string, limit 
   return rows.map(mapAdminReferral);
 }
 
+async function canonicalizeSalesUserRef(ref: string | null | undefined): Promise<string | null> {
+  const value = ref?.trim() || "";
+  if (!value) return null;
+
+  const rows = await runWhatsappAgentSql<{ bubble_id: string | null }>(
+    `
+      SELECT u.bubble_id
+      FROM "user" u
+      WHERE u.bubble_id = $1
+         OR ($1 ~ '^[0-9]+$' AND u.id = $1::bigint)
+      ORDER BY CASE WHEN u.bubble_id = $1 THEN 0 ELSE 1 END, u.id
+      LIMIT 1
+    `,
+    [value],
+  );
+
+  return rows[0]?.bubble_id?.trim() || null;
+}
+
 export async function createWhatsappReferral(
   referrer: WhatsappReferrerAccount,
   draft: WhatsappLeadDraft,
@@ -1135,7 +1202,7 @@ export async function createWhatsappReferral(
 ) {
   const leadCustomerId = `cust_${crypto.randomUUID().replace(/-/g, "").slice(0, 12)}`;
   const referralBubbleId = `reflead_${crypto.randomUUID().replace(/-/g, "").slice(0, 12)}`;
-  const preferredAgentId = options.preferredAgentId?.trim() || null;
+  const preferredAgentId = await canonicalizeSalesUserRef(options.preferredAgentId);
   // Relationship/project type are not collected over WhatsApp; default them to
   // neutral values so the row stays valid and managers can triage later.
   const defaultRelationship = "Other";
@@ -1260,6 +1327,9 @@ export async function updateWhatsappReferral(
     throw new Error("Lead not found under this WhatsApp referrer account.");
   }
 
+  const referralValue =
+    update.field === "preferredAgent" ? await canonicalizeSalesUserRef(update.value) : update.value || null;
+
   if (mapping.referralColumn) {
     await runWhatsappAgentSql(
       `
@@ -1269,7 +1339,7 @@ export async function updateWhatsappReferral(
         WHERE id = $2
           AND linked_customer_profile = $3
       `,
-      [update.value || null, update.referralId, referrer.customerId],
+      [referralValue, update.referralId, referrer.customerId],
     );
   }
 

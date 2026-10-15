@@ -152,8 +152,8 @@ async function renderAdminDashboard(params: Awaited<AdminPageProps["searchParams
       <section className="hero-reveal hero-delay mt-6 rounded-2xl border border-slate-200 bg-white p-6 sm:p-8">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h2 className="text-xl font-semibold text-slate-900">Filter Leads</h2>
-            <p className="mt-1 text-sm text-slate-600">Search by lead name or mobile number and refine by assignment or agent.</p>
+            <h2 className="text-xl font-semibold text-slate-900">Filter Leads (Potential Contacts)</h2>
+            <p className="mt-1 text-sm text-slate-600">Search by lead (potential contact) name or mobile number and refine by assignment or agent.</p>
           </div>
           <Link href="/admin" className="text-sm font-semibold text-teal-700 hover:text-teal-800">
             Reset filters
@@ -168,7 +168,7 @@ async function renderAdminDashboard(params: Awaited<AdminPageProps["searchParams
               name="search"
               defaultValue={filters.search}
               className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 outline-none ring-amber-500 focus:ring"
-              placeholder="Lead name or mobile number"
+              placeholder="Lead (potential contact) name or mobile number"
             />
           </label>
 
@@ -179,7 +179,7 @@ async function renderAdminDashboard(params: Awaited<AdminPageProps["searchParams
               defaultValue={filters.assignment}
               className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 outline-none ring-amber-500 focus:ring"
             >
-              <option value="">All leads</option>
+              <option value="">All leads (potential contacts)</option>
               <option value="unassigned">Unassigned only</option>
               <option value="assigned">Assigned only</option>
             </select>
@@ -229,12 +229,12 @@ async function renderAdminDashboard(params: Awaited<AdminPageProps["searchParams
 
       <section className="hero-reveal hero-delay-2 mt-6 rounded-2xl border border-slate-200 bg-white p-6 sm:p-8">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <h2 className="text-xl font-semibold text-slate-900">Lead Queue</h2>
-          <span className="pill">Visible leads: {referrals.length}</span>
+          <h2 className="text-xl font-semibold text-slate-900">Lead (Potential Contact) Queue</h2>
+          <span className="pill">Visible leads (potential contacts): {referrals.length}</span>
         </div>
 
         {referrals.length === 0 ? (
-          <p className="mt-4 text-sm text-slate-600">No leads matched the current filters.</p>
+          <p className="mt-4 text-sm text-slate-600">No leads (potential contacts) matched the current filters.</p>
         ) : (
           <div className="mt-5 grid gap-4">
             {referrals.map((referral) => (
@@ -245,7 +245,7 @@ async function renderAdminDashboard(params: Awaited<AdminPageProps["searchParams
                     <p className="text-sm text-slate-600">
                       {referral.leadMobile || "-"} | {referral.relationship || "-"} | {referral.projectType || "Not set"}
                     </p>
-                    <p className="text-sm text-slate-600">Referrer: {referral.referrerCustomerName || referral.referrerCustomerId}</p>
+                    <p className="text-sm text-slate-600">Referrer (Introducer): {referral.referrerCustomerName || referral.referrerCustomerId}</p>
                     <p className="text-sm text-slate-600">
                       Location: {formatLocation(referral.leadState, referral.leadCity, referral.leadAddress)}
                     </p>
@@ -267,7 +267,7 @@ async function renderAdminDashboard(params: Awaited<AdminPageProps["searchParams
                     defaultAgentId={referral.assignedAgentId}
                     inputName="assignedAgentId"
                     label="Admin assign to agent"
-                    helperText="Leave blank to keep this lead unassigned."
+                    helperText="Leave blank to keep this lead (potential contact) unassigned."
                   />
                   <label className="text-sm text-slate-700">
                     Status
