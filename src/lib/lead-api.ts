@@ -53,6 +53,36 @@ export type ApiLeadSource = {
   type: "ads" | "other";
 };
 
+export const listLeadsQuerySchema = z.strictObject({
+  referrer: sourceNameSchema.optional(),
+  limit: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().min(1).max(500)).default(100),
+  offset: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().min(0).max(2147483647)).default(0),
+});
+
+export type ListLeadsQuery = z.infer<typeof listLeadsQuerySchema>;
+
+export type ListedApiLead = {
+  referralId: number;
+  leadCustomerId: string | null;
+  leadName: string;
+  leadMobileNumber: string | null;
+  referrer: { customerId: string; name: string; type: "source" };
+  assignedAgentId: string | null;
+  status: string;
+  leadState: string;
+  leadCity: string;
+  leadAddress: string;
+  relationship: string;
+  projectType: string;
+  remark: string;
+  createdAt: string | null;
+};
+
+export type ApiLeadList = {
+  leads: ListedApiLead[];
+  pagination: { total: number; limit: number; offset: number; hasMore: boolean };
+};
+
 export class LeadApiError extends Error {
   readonly status: number;
   readonly code: string;
@@ -150,6 +180,39 @@ export function createListSourcesApiHandler(dependencies: {
         name: error instanceof Error ? error.name : "UnknownError",
       });
       return json({ error: "Unable to retrieve lead sources right now.", code: "INTERNAL_ERROR" }, 500);
+    }
+  };
+}
+
+export function createListLeadsApiHandler(dependencies: {
+  getApiKey: () => string | undefined;
+  listLeads: (query: ListLeadsQuery) => Promise<ApiLeadList>;
+}) {
+  const json = (body: unknown, status: number) => Response.json(body, {
+    status,
+    headers: { "Cache-Control": "no-store" },
+  });
+
+  return async function GET(request: Request) {
+    const authError = authenticateLeadApiKey(request, dependencies.getApiKey());
+    if (authError) return authError;
+
+    const searchParams = new URL(request.url).searchParams;
+    const parsed = listLeadsQuerySchema.safeParse(Object.fromEntries(searchParams));
+    if (!parsed.success || [...searchParams.keys()].some((key) => searchParams.getAll(key).length > 1)) {
+      return json({ error: "Invalid lead query. Use referrer, limit (1-500), and offset (0-2147483647), once each.", code: "INVALID_INPUT" }, 400);
+    }
+
+    try {
+      return json(await dependencies.listLeads(parsed.data), 200);
+    } catch (error) {
+      if (error instanceof LeadApiError) {
+        return json({ error: error.message, code: error.code }, error.status);
+      }
+      console.error("[lead-api] Failed to list leads.", {
+        name: error instanceof Error ? error.name : "UnknownError",
+      });
+      return json({ error: "Unable to retrieve leads right now.", code: "INTERNAL_ERROR" }, 500);
     }
   };
 }

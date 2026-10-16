@@ -1,0 +1,14 @@
+# Eternalgy Lead API
+
+> Create leads with source attribution and optional sales-agent assignment; discover source accounts and agents; retrieve current leads by Introducer.
+
+- [Human documentation](https://referral.atap.solar/api-docs): Full API reference and integration examples.
+- [AI agent guide](https://referral.atap.solar/api-docs/agent-guide): Plain Markdown, terminology, request rules, pagination, errors and safe retries, with a runnable read-only Node.js example.
+- [OpenAPI 3.1 JSON](https://referral.atap.solar/api-docs/openapi.json): Machine-readable operation, authentication, request and response schemas.
+
+Base URL: https://referral.atap.solar
+Business term Introducer maps to the API field/query parameter referrer.
+All business endpoints require Authorization: Bearer <LEADS_API_KEY> from your backend. Documentation is public.
+POST /api/leads creates a real lead and is not idempotent. Do not replay it automatically after an uncertain result.
+GET /api/leads lists source-account leads with limit/offset pagination; person referrals are excluded.
+Use documentation from the same deployed server as the API.

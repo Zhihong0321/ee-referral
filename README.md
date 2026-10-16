@@ -60,15 +60,22 @@ Required:
 
 ## Lead intake API
 
-The Lead API provides three authenticated endpoints configured via `LEADS_API_KEY`:
+The Lead API provides four authenticated endpoints configured via `LEADS_API_KEY`:
 
 - `GET /api/leads/sources` (or `GET /api/leads/ads`): Lists available ad accounts and lead sources (e.g. `Meta Ads Leon`, `Google Ads Gan`, `Facebook Ads`, `Google Ads`) with their IDs.
 - `GET /api/leads/agents` (or `GET /api/agents`): Lists available sales agents (`access_level` containing `sales`) to assign leads to.
 - `POST /api/leads`: Ingests incoming leads, associates them with the selected ad account or referrer, and assigns them to a sales user.
+- `GET /api/leads?referrer=Meta%20Ads%20Leon`: Retrieves leads by source name or ID with `limit`/`offset` pagination. Omit `referrer` for all source-account leads.
 
 Public documentation is served at `/api-docs` without login and linked from the
 homepage. See [API requests, configuration, and responses](docs/lead-api.md) for
 server setup details.
+
+For AI coding tools, the public page links to `/api-docs/agent-guide` (plain
+Markdown with a complete integration workflow and runnable read-only Node.js
+example) and `/api-docs/openapi.json` (OpenAPI 3.1 request/response contract).
+`/llms.txt` provides discovery links. These documents require no API key;
+business API calls use the same `LEADS_API_KEY` in the bearer header.
 
 ## Run
 

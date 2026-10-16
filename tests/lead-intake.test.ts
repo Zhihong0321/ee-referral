@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { after, before, beforeEach, test } from "node:test";
 import { PGlite } from "@electric-sql/pglite";
 
-import { createApiLead, listApiAgents, listApiSources, type LeadSqlExecutor } from "../src/lib/lead-intake.ts";
-import { LeadApiError, leadApiInputSchema, leadSourceCustomerId } from "../src/lib/lead-api.ts";
+import { createApiLead, listApiAgents, listApiLeads, listApiSources, type LeadSqlExecutor } from "../src/lib/lead-intake.ts";
+import { createListLeadsApiHandler, LeadApiError, leadApiInputSchema, leadSourceCustomerId } from "../src/lib/lead-api.ts";
 
 const db = new PGlite();
 const execute: LeadSqlExecutor = async <T>(sql: string, params: unknown[] = []) => (await db.query<T>(sql, params)).rows;
@@ -188,4 +188,83 @@ test("creates leads for Meta Ads Leon and Google Ads Gan with digital_ads lead_s
 
   const byIdObject = await createApiLead(input({ customerId: leadSourceCustomerId("Google Ads Gan") }), execute);
   assert.equal(byIdObject.referrer.name, "Google Ads Gan");
+});
+
+test("retrieves complete leads by exact source name or ID without mixing sources or person referrals", async () => {
+  const leon = await createApiLead(input("Meta Ads Leon"), execute);
+  const gan = await createApiLead(input("Google Ads Gan", null), execute);
+  const other = await createApiLead(input("TikTok Ads Mei"), execute);
+  await createApiLead(input("Meta Ads Leon Extra"), execute);
+  await execute("INSERT INTO customer (customer_id, name, remark) VALUES ('person_1', 'Meta Ads Leon', 'REFERRAL_ACCOUNT')");
+  await createApiLead(input({ customerId: "person_1" }), execute);
+  await execute("UPDATE referral SET status = 'Contacted' WHERE id = $1", [leon.referralId]);
+
+  for (const referrer of [" meta   ads LEON ", leon.referrer.customerId]) {
+    const result = await listApiLeads({ referrer, limit: 100, offset: 0 }, execute);
+    assert.deepEqual(result.pagination, { total: 1, limit: 100, offset: 0, hasMore: false });
+    const [lead] = result.leads;
+    assert.deepEqual(lead, {
+      ...leon, status: "Contacted", leadState: "Selangor", leadCity: "Kajang", leadAddress: "1 Jalan Test",
+      relationship: "Other", projectType: "OTHERS", remark: "Interested in solar", createdAt: lead.createdAt,
+    });
+    assert.ok(lead.createdAt && !Number.isNaN(Date.parse(lead.createdAt)));
+    assert.ok(!("notes" in lead));
+  }
+  for (const [referrer, expected] of [["google ads gan", gan], ["tiktok ads mei", other]] as const) {
+    const result = await listApiLeads({ referrer, limit: 100, offset: 0 }, execute);
+    assert.deepEqual(result.leads.map((lead) => lead.referralId), [expected.referralId]);
+    assert.equal(result.leads[0].assignedAgentId, expected.assignedAgentId);
+  }
+  for (const referrer of ["No Such Ads", "Meta Ads%", "Meta Ads Leon' OR 1=1 --"]) {
+    assert.deepEqual(await listApiLeads({ referrer, limit: 100, offset: 0 }, execute), {
+      leads: [], pagination: { total: 0, limit: 100, offset: 0, hasMore: false },
+    });
+  }
+});
+
+test("source lead listing paginates all results in descending referral ID order and keeps totals for empty pages", async () => {
+  const first = await createApiLead(input("Meta Ads Leon"), execute);
+  const second = await createApiLead(input("Google Ads Gan"), execute);
+  const third = await createApiLead(input("Roadshow"), execute);
+  const page1 = await listApiLeads({ limit: 2, offset: 0 }, execute);
+  assert.deepEqual(page1.leads.map((lead) => lead.referralId), [third.referralId, second.referralId]);
+  assert.deepEqual(page1.pagination, { total: 3, limit: 2, offset: 0, hasMore: true });
+  const page2 = await listApiLeads({ limit: 2, offset: 2 }, execute);
+  assert.deepEqual(page2.leads.map((lead) => lead.referralId), [first.referralId]);
+  assert.deepEqual(page2.pagination, { total: 3, limit: 2, offset: 2, hasMore: false });
+  const empty = await listApiLeads({ limit: 2, offset: 10 }, execute);
+  assert.deepEqual(empty, { leads: [], pagination: { total: 3, limit: 2, offset: 10, hasMore: false } });
+});
+
+test("listing supports legacy optional columns, plain notes, and referrals without a linked lead customer", async () => {
+  await db.exec("ALTER TABLE referral DROP COLUMN assigned_agent, DROP COLUMN project_type, DROP COLUMN lead_state, DROP COLUMN lead_city, DROP COLUMN lead_address");
+  try {
+    const saved = await createApiLead(input("Meta Ads Leon", null), execute);
+    const query = { referrer: "Meta Ads Leon", limit: 100, offset: 0 };
+    const [lead] = (await listApiLeads(query, execute)).leads;
+    assert.equal(lead.leadState, "Selangor");
+    assert.equal(lead.projectType, "OTHERS");
+    assert.equal(lead.remark, "Interested in solar");
+    assert.equal(lead.assignedAgentId, null);
+    await execute("UPDATE customer SET notes = 'legacy plain text' WHERE customer_id = $1", [saved.leadCustomerId]);
+    assert.equal((await listApiLeads(query, execute)).leads[0].remark, "");
+    await execute("DELETE FROM customer WHERE customer_id = $1", [saved.leadCustomerId]);
+    const orphan = (await listApiLeads(query, execute)).leads[0];
+    assert.equal(orphan.referralId, saved.referralId);
+    assert.equal(orphan.leadName, saved.leadName);
+  } finally {
+    await db.exec("ALTER TABLE referral ADD COLUMN assigned_agent text, ADD COLUMN project_type text, ADD COLUMN lead_state text, ADD COLUMN lead_city text, ADD COLUMN lead_address text");
+  }
+});
+
+test("authenticated GET handler retrieves stored source leads through the SQL executor", async () => {
+  const saved = await createApiLead(input("Google Ads Gan"), execute);
+  const handler = createListLeadsApiHandler({ getApiKey: () => "test-key", listLeads: (query) => listApiLeads(query, execute) });
+  const response = await handler(new Request("http://localhost/api/leads?referrer=google%20ads%20gan&limit=1", {
+    headers: { Authorization: "Bearer test-key" },
+  }));
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.leads[0].referralId, saved.referralId);
+  assert.deepEqual(body.pagination, { total: 1, limit: 1, offset: 0, hasMore: false });
 });

@@ -4,12 +4,14 @@ import test from "node:test";
 import {
   createLeadApiHandler,
   createListAgentsApiHandler,
+  createListLeadsApiHandler,
   createListSourcesApiHandler,
   LeadApiError,
   leadApiInputSchema,
   leadSourceCustomerId,
   type ApiAgentOption,
   type ApiLeadSource,
+  type ApiLeadList,
   type CreatedApiLead,
 } from "../src/lib/lead-api.ts";
 
@@ -176,4 +178,62 @@ test("list sources API requires authentication and returns available ads and sou
   const failure = await failed(getSourcesRequest("test-key"));
   assert.equal(failure.status, 500);
   assert.doesNotMatch(await failure.text(), /db failure/);
+});
+
+test("list leads API authenticates before querying and validates source filters and pagination", async () => {
+  let calls = 0;
+  const listLeads = async (): Promise<ApiLeadList> => {
+    calls++;
+    return { leads: [], pagination: { total: 0, limit: 100, offset: 0, hasMore: false } };
+  };
+  const get = (query = "", token = "test-key") => new Request(`http://localhost/api/leads${query}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  const disabled = createListLeadsApiHandler({ getApiKey: () => undefined, listLeads });
+  assert.equal((await disabled(get())).status, 503);
+  const handler = createListLeadsApiHandler({ getApiKey: () => "test-key", listLeads });
+  assert.equal((await handler(get("", ""))).status, 401);
+  assert.equal((await handler(get("", "wrong-key"))).status, 401);
+  for (const query of [
+    "?referrer=", "?referrer=x", `?referrer=${"x".repeat(121)}`,
+    "?limit=0", "?limit=501", "?limit=1.5", "?limit=abc", "?limit=",
+    "?offset=-1", "?offset=1.5", "?offset=2147483648",
+    "?referrer=Meta%20Ads%20Leon&referrer=Google%20Ads%20Gan", "?limit=1&limit=2", "?source=Google%20Ads",
+  ]) {
+    const response = await handler(get(query));
+    assert.equal(response.status, 400, query);
+    assert.equal((await response.json()).code, "INVALID_INPUT");
+  }
+  assert.equal(calls, 0);
+
+  const filtered = createListLeadsApiHandler({ getApiKey: () => "test-key", listLeads: async (query) => {
+    assert.deepEqual(query, { referrer: "Meta Ads Leon", limit: 25, offset: 50 });
+    return listLeads();
+  } });
+  const response = await filtered(get("?referrer=%20meta%20ads%20%20leon%20&limit=25&offset=50"));
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  assert.deepEqual(await response.json(), await listLeads());
+  const defaults = createListLeadsApiHandler({ getApiKey: () => "test-key", listLeads: async (query) => {
+    assert.deepEqual(query, { limit: 100, offset: 0 });
+    return listLeads();
+  } });
+  assert.equal((await defaults(get())).status, 200);
+});
+
+test("list leads API preserves domain errors and hides database failures", async () => {
+  const request = new Request("http://localhost/api/leads?referrer=Google%20Ads", {
+    headers: { Authorization: "Bearer test-key" },
+  });
+  for (const [error, status, code] of [
+    [new LeadApiError(400, "INVALID_INPUT", "Invalid lead query."), 400, "INVALID_INPUT"],
+    [new Error("private database details"), 500, "INTERNAL_ERROR"],
+  ] as const) {
+    const handler = createListLeadsApiHandler({ getApiKey: () => "test-key", listLeads: async () => { throw error; } });
+    const response = await handler(request);
+    assert.equal(response.status, status);
+    const body = await response.json();
+    assert.equal(body.code, code);
+    assert.doesNotMatch(JSON.stringify(body), /private database/);
+  }
 });
