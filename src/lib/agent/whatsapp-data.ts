@@ -1032,9 +1032,10 @@ export async function listWhatsappReferrals(referrerCustomerId: string) {
         SELECT u.name
         FROM "user" u
         WHERE u.bubble_id = NULLIF(BTRIM(r.linked_agent), '')
-           OR (
-             NULLIF(BTRIM(r.linked_agent), '') ~ '^[0-9]+$'
-             AND u.id = NULLIF(BTRIM(r.linked_agent), '')::bigint
+           OR u.id = (
+             CASE WHEN NULLIF(BTRIM(r.linked_agent), '') ~ '^[0-9]{1,18}$'
+               THEN NULLIF(BTRIM(r.linked_agent), '')::bigint
+             END
            )
         ORDER BY CASE WHEN u.bubble_id = NULLIF(BTRIM(r.linked_agent), '') THEN 0 ELSE 1 END, u.id
         LIMIT 1
@@ -1080,9 +1081,10 @@ export async function listAllWhatsappReferrals(limit = 30) {
         SELECT u.name
         FROM "user" u
         WHERE u.bubble_id = NULLIF(BTRIM(r.linked_agent), '')
-           OR (
-             NULLIF(BTRIM(r.linked_agent), '') ~ '^[0-9]+$'
-             AND u.id = NULLIF(BTRIM(r.linked_agent), '')::bigint
+           OR u.id = (
+             CASE WHEN NULLIF(BTRIM(r.linked_agent), '') ~ '^[0-9]{1,18}$'
+               THEN NULLIF(BTRIM(r.linked_agent), '')::bigint
+             END
            )
         ORDER BY CASE WHEN u.bubble_id = NULLIF(BTRIM(r.linked_agent), '') THEN 0 ELSE 1 END, u.id
         LIMIT 1
@@ -1139,9 +1141,10 @@ export async function listWhatsappReferralsByReferrerPhone(phone: string, limit 
         SELECT u.name
         FROM "user" u
         WHERE u.bubble_id = NULLIF(BTRIM(r.linked_agent), '')
-           OR (
-             NULLIF(BTRIM(r.linked_agent), '') ~ '^[0-9]+$'
-             AND u.id = NULLIF(BTRIM(r.linked_agent), '')::bigint
+           OR u.id = (
+             CASE WHEN NULLIF(BTRIM(r.linked_agent), '') ~ '^[0-9]{1,18}$'
+               THEN NULLIF(BTRIM(r.linked_agent), '')::bigint
+             END
            )
         ORDER BY CASE WHEN u.bubble_id = NULLIF(BTRIM(r.linked_agent), '') THEN 0 ELSE 1 END, u.id
         LIMIT 1

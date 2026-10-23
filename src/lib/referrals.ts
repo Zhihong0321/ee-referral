@@ -355,14 +355,17 @@ function salesUserJoin(capabilities: CustomerCapabilities, column: string, alias
     return "";
   }
 
+  // Postgres may evaluate the ::bigint cast before an AND'd regex check (e.g. as an index
+  // condition), which fails on Bubble IDs. CASE is the only construct that guarantees order.
   return `
     LEFT JOIN LATERAL (
       SELECT u.bubble_id, u.name
       FROM "user" u
       WHERE u.bubble_id = NULLIF(BTRIM(${column}), '')
-         OR (
-           NULLIF(BTRIM(${column}), '') ~ '^[0-9]+$'
-           AND u.id = NULLIF(BTRIM(${column}), '')::bigint
+         OR u.id = (
+           CASE WHEN NULLIF(BTRIM(${column}), '') ~ '^[0-9]{1,18}$'
+             THEN NULLIF(BTRIM(${column}), '')::bigint
+           END
          )
       ORDER BY CASE WHEN u.bubble_id = NULLIF(BTRIM(${column}), '') THEN 0 ELSE 1 END, u.id
       LIMIT 1
