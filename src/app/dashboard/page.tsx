@@ -515,8 +515,14 @@ async function renderReferrerDashboard(
       listReferralsByReferrer(referralAccount.customerId),
       listAgentOptions(),
     ]);
-  } catch {
-    loadError = "Unable to load your referral account. Check database write permissions and environment variables.";
+  } catch (error) {
+    const code = (error as { code?: unknown } | null)?.code;
+    console.error(
+      `[dashboard] failed to load referrer dashboard${referralId ? ` for ${referralId}` : ""}:`,
+      error instanceof Error ? error.message : error,
+      code ? `(code ${String(code)})` : "",
+    );
+    loadError = "We couldn't load your referrals right now. Please refresh the page, or contact support if it keeps happening.";
   }
 
   return (
