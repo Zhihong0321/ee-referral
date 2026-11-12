@@ -3,7 +3,8 @@ import { after, before, beforeEach, test } from "node:test";
 import { PGlite } from "@electric-sql/pglite";
 
 import { createApiLead, listApiAgents, listApiLeads, listApiSources, type LeadSqlExecutor } from "../src/lib/lead-intake.ts";
-import { createListLeadsApiHandler, LeadApiError, leadApiInputSchema, leadSourceCustomerId } from "../src/lib/lead-api.ts";
+import { createLeadApiHandler, createListLeadsApiHandler, LeadApiError, leadApiInputSchema, leadSourceCustomerId } from "../src/lib/lead-api.ts";
+import { KNOWN_AD_SOURCES, normalizeAdSourceName } from "../src/lib/referral-options.ts";
 
 const db = new PGlite();
 const execute: LeadSqlExecutor = async <T>(sql: string, params: unknown[] = []) => (await db.query<T>(sql, params)).rows;
@@ -44,91 +45,65 @@ beforeEach(async () => {
 });
 after(async () => { await db.close(); });
 
-test("creates advertising lead and canonical assigned user with source attribution visible to existing joins", async () => {
-  const result = await createApiLead(input(), execute);
-  assert.equal(result.status, "Assigned");
-  assert.equal(result.assignedAgentId, "sales_agent_42");
-  const [saved] = await execute<Record<string, unknown>>(`
-    SELECT c.phone, c.lead_source, c.state, c.notes, r.assigned_agent, r.linked_agent, r.status,
-      source.name AS referrer_name, source.remark AS source_marker, source.phone AS source_phone,
-      u.name AS agent_name, a.actor_kind, a.metadata
-    FROM referral r
-    JOIN customer c ON c.customer_id = r.linked_invoice
-    JOIN customer source ON source.customer_id = r.linked_customer_profile
-    JOIN "user" u ON u.bubble_id = r.assigned_agent
-    JOIN activity_log a ON a.entity_id = r.id::text
-    WHERE r.id = $1
-  `, [result.referralId]);
-  assert.equal(saved.phone, "60123456789");
-  assert.equal(saved.lead_source, "digital_ads");
-  assert.equal(saved.referrer_name, "Google Ads");
-  assert.equal(saved.source_marker, "LEAD_SOURCE_ACCOUNT");
-  assert.equal(saved.source_phone, null);
-  assert.equal(saved.agent_name, "Agent A");
-  assert.equal(saved.assigned_agent, "sales_agent_42");
-  assert.equal(saved.linked_agent, null);
-  assert.equal(saved.status, "Assigned");
-  assert.equal(saved.actor_kind, "api");
-  assert.equal(JSON.parse(String(saved.notes)).remark, "Interested in solar");
-  assert.equal((saved.metadata as Record<string, unknown>).assignedAgentId, "sales_agent_42");
-});
-
-test("reuses a source across case and spacing variants and supports Facebook Ads", async () => {
-  const first = await createApiLead(input(" google   ads ", "sales_agent_42"), execute);
-  const second = await createApiLead(input("GOOGLE ADS"), execute);
-  assert.equal(first.referrer.customerId, second.referrer.customerId);
-  const facebook = await createApiLead(input("facebook Ads"), execute);
-  assert.equal(facebook.referrer.name, "Facebook Ads");
-  assert.notEqual(facebook.referrer.customerId, first.referrer.customerId);
-  assert.equal((await execute<{ count: number }>("SELECT COUNT(*)::int AS count FROM customer WHERE remark = 'LEAD_SOURCE_ACCOUNT'"))[0].count, 2);
-});
-
-test("creates a Pending lead without an assigned user", async () => {
-  const result = await createApiLead(input("Facebook Ads", null), execute);
-  assert.equal(result.status, "Pending");
-  assert.equal(result.assignedAgentId, null);
-  const [row] = await execute<{ assigned_agent: string | null }>("SELECT assigned_agent FROM referral");
-  assert.equal(row.assigned_agent, null);
-});
-
-test("an existing person remains the introducer while a sales user receives the lead", async () => {
-  await execute("INSERT INTO customer (customer_id, name, remark) VALUES ($1, $2, $3)", ["person_1", "Ahmad", "REFERRAL_ACCOUNT"]);
-  const result = await createApiLead({ ...input(), referrer: { customerId: "person_1" } }, execute);
-  assert.deepEqual(result.referrer, { customerId: "person_1", name: "Ahmad", type: "person" });
-  assert.equal(result.assignedAgentId, "sales_agent_42");
-  assert.equal((await execute<{ lead_source: string }>("SELECT lead_source FROM customer WHERE customer_id = $1", [result.leadCustomerId]))[0].lead_source, "referral");
-});
-
-test("rejects missing and non-sales agents and unknown people before writing anything", async () => {
-  for (const agent of ["missing_agent", "43", "9999999999999999999999999999"]) {
-    await assert.rejects(createApiLead(input("Google Ads", agent), execute), (e: unknown) => e instanceof LeadApiError && e.code === "INVALID_AGENT");
+/**
+ * Test-only fixture. createApiLead() is retired (webchat is the only add-lead method),
+ * so listing tests seed rows directly with the same column layout the API used to write.
+ */
+async function seedLead(lead: ReturnType<typeof input>) {
+  const referrerKey = typeof lead.referrer === "string" ? lead.referrer : lead.referrer.customerId;
+  const person = (await execute<{ customer_id: string; name: string }>(
+    "SELECT customer_id, name FROM customer WHERE customer_id = $1 AND remark = 'REFERRAL_ACCOUNT'", [referrerKey]))[0];
+  const referrer = person
+    ? { customerId: person.customer_id, name: person.name, type: "person" as const }
+    : (() => {
+        const customerId = referrerKey.startsWith("lead_source_") ? referrerKey : leadSourceCustomerId(referrerKey);
+        const known = KNOWN_AD_SOURCES.find((name) => leadSourceCustomerId(name) === customerId);
+        return { customerId, name: known ?? normalizeAdSourceName(referrerKey), type: "source" as const };
+      })();
+  if (referrer.type === "source") {
+    await execute(`INSERT INTO customer (customer_id, name, lead_source, remark) VALUES ($1, $2, 'other', 'LEAD_SOURCE_ACCOUNT') ON CONFLICT (customer_id) DO NOTHING`, [referrer.customerId, referrer.name]);
   }
-  await assert.rejects(createApiLead({ ...input(), referrer: { customerId: "missing_person" } }, execute), (e: unknown) => e instanceof LeadApiError && e.code === "INVALID_REFERRER");
-  assert.equal((await execute<{ count: number }>("SELECT COUNT(*)::int AS count FROM customer"))[0].count, 0);
-});
+  const agent = lead.assignedAgentId
+    ? (await execute<{ bubble_id: string }>(`SELECT bubble_id FROM "user" WHERE bubble_id = $1 OR id::text = $1`, [lead.assignedAgentId]))[0]?.bubble_id ?? null
+    : null;
+  const leadCustomerId = `cust_seed_${Math.random().toString(36).slice(2, 10)}`;
+  const notes = JSON.stringify({ relationship: lead.relationship, projectType: lead.projectType, leadState: lead.leadState,
+    leadCity: lead.leadCity, leadAddress: lead.leadAddress, remark: lead.remark, createdAt: new Date().toISOString() });
+  await execute(`INSERT INTO customer (customer_id, name, phone, state, city, address, lead_source, remark, notes)
+    VALUES ($1, $2, $3, $4, $5, $6, 'other', $7, $8)`, [leadCustomerId, lead.leadName, lead.leadMobileNumber, lead.leadState || null,
+    lead.leadCity || null, lead.leadAddress || null, lead.relationship, notes]);
+  const status = agent ? "Assigned" : "Pending";
+  const [row] = await execute<{ id: number }>(`INSERT INTO referral (bubble_id, linked_customer_profile, name, relationship, mobile_number, status,
+    linked_invoice, project_type, assigned_agent, lead_state, lead_city, lead_address)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id`,
+    [`reflead_seed_${Math.random().toString(36).slice(2, 10)}`, referrer.customerId, lead.leadName, lead.relationship, lead.leadMobileNumber,
+     status, leadCustomerId, lead.projectType, agent, lead.leadState || null, lead.leadCity || null, lead.leadAddress || null]);
+  return { referralId: row.id, leadCustomerId, leadName: lead.leadName, leadMobileNumber: lead.leadMobileNumber,
+    referrer, assignedAgentId: agent, status };
+}
 
-test("an audit insertion failure rolls back the source, customer and referral together", async () => {
-  await db.exec("ALTER TABLE activity_log ADD CONSTRAINT reject_test_audit CHECK (status <> 'success')");
-  try {
-    await assert.rejects(createApiLead(input(), execute));
-    for (const table of ["customer", "referral", "activity_log"]) {
-      assert.equal((await execute<{ count: number }>(`SELECT COUNT(*)::int AS count FROM ${table}`))[0].count, 0);
-    }
-  } finally {
-    await db.exec("ALTER TABLE activity_log DROP CONSTRAINT reject_test_audit");
+test("createApiLead is retired: it throws 410 and writes nothing", async () => {
+  await assert.rejects(
+    createApiLead(input(), execute),
+    (e: unknown) => e instanceof LeadApiError && e.status === 410 && e.code === "LEAD_METHOD_RETIRED" && e.message.includes("/webchat"),
+  );
+  for (const table of ["customer", "referral", "activity_log"]) {
+    assert.equal((await execute<{ count: number }>(`SELECT COUNT(*)::int AS count FROM ${table}`))[0].count, 0);
   }
 });
 
-test("reports unavailable assignment storage instead of silently dropping the assignment", async () => {
-  await db.exec("ALTER TABLE referral DROP COLUMN assigned_agent");
-  try {
-    await assert.rejects(createApiLead(input(), execute), (e: unknown) => e instanceof LeadApiError && e.code === "ASSIGNMENT_NOT_CONFIGURED");
-    assert.equal((await execute<{ count: number }>("SELECT COUNT(*)::int AS count FROM customer"))[0].count, 0);
-    const unassigned = await createApiLead(input("Google Ads", null), execute);
-    assert.equal(unassigned.assignedAgentId, null);
-  } finally {
-    await db.exec("ALTER TABLE referral ADD COLUMN assigned_agent text");
-  }
+test("POST /api/leads handler answers 410 with the webchat address and writes nothing", async () => {
+  const handler = createLeadApiHandler({ getApiKey: () => "test-key", createLead: (lead) => createApiLead(lead, execute) });
+  const response = await handler(new Request("http://localhost/api/leads", {
+    method: "POST",
+    headers: { Authorization: "Bearer test-key", "Content-Type": "application/json" },
+    body: JSON.stringify(input()),
+  }));
+  assert.equal(response.status, 410);
+  const body = await response.json();
+  assert.equal(body.code, "LEAD_METHOD_RETIRED");
+  assert.ok(String(body.error).includes("https://referral.atap.solar/webchat"));
+  assert.equal((await execute<{ count: number }>("SELECT COUNT(*)::int AS count FROM referral"))[0].count, 0);
 });
 
 test("listApiAgents returns only users with sales in access_level and formats agent options", async () => {
@@ -171,32 +146,13 @@ test("listApiSources returns configured ad sources including Meta Ads Leon and G
   assert.equal(metaLeon?.type, "ads");
 });
 
-test("creates leads for Meta Ads Leon and Google Ads Gan with digital_ads lead_source", async () => {
-  const leon = await createApiLead(input("Meta Ads Leon"), execute);
-  assert.equal(leon.referrer.name, "Meta Ads Leon");
-  assert.equal(leon.referrer.customerId, leadSourceCustomerId("Meta Ads Leon"));
-
-  const [leonCustomer] = await execute<{ lead_source: string }>(
-    "SELECT lead_source FROM customer WHERE customer_id = $1",
-    [leon.leadCustomerId],
-  );
-  assert.equal(leonCustomer.lead_source, "digital_ads");
-
-  // Also support passing the customer ID directly as string or object
-  const byIdString = await createApiLead(input(leadSourceCustomerId("Google Ads Gan")), execute);
-  assert.equal(byIdString.referrer.name, "Google Ads Gan");
-
-  const byIdObject = await createApiLead(input({ customerId: leadSourceCustomerId("Google Ads Gan") }), execute);
-  assert.equal(byIdObject.referrer.name, "Google Ads Gan");
-});
-
 test("retrieves complete leads by exact source name or ID without mixing sources or person referrals", async () => {
-  const leon = await createApiLead(input("Meta Ads Leon"), execute);
-  const gan = await createApiLead(input("Google Ads Gan", null), execute);
-  const other = await createApiLead(input("TikTok Ads Mei"), execute);
-  await createApiLead(input("Meta Ads Leon Extra"), execute);
+  const leon = await seedLead(input("Meta Ads Leon"));
+  const gan = await seedLead(input("Google Ads Gan", null));
+  const other = await seedLead(input("TikTok Ads Mei"));
+  await seedLead(input("Meta Ads Leon Extra"));
   await execute("INSERT INTO customer (customer_id, name, remark) VALUES ('person_1', 'Meta Ads Leon', 'REFERRAL_ACCOUNT')");
-  await createApiLead(input({ customerId: "person_1" }), execute);
+  await seedLead(input({ customerId: "person_1" }));
   await execute("UPDATE referral SET status = 'Contacted' WHERE id = $1", [leon.referralId]);
 
   for (const referrer of [" meta   ads LEON ", leon.referrer.customerId]) {
@@ -223,9 +179,9 @@ test("retrieves complete leads by exact source name or ID without mixing sources
 });
 
 test("source lead listing paginates all results in descending referral ID order and keeps totals for empty pages", async () => {
-  const first = await createApiLead(input("Meta Ads Leon"), execute);
-  const second = await createApiLead(input("Google Ads Gan"), execute);
-  const third = await createApiLead(input("Roadshow"), execute);
+  const first = await seedLead(input("Meta Ads Leon"));
+  const second = await seedLead(input("Google Ads Gan"));
+  const third = await seedLead(input("Roadshow"));
   const page1 = await listApiLeads({ limit: 2, offset: 0 }, execute);
   assert.deepEqual(page1.leads.map((lead) => lead.referralId), [third.referralId, second.referralId]);
   assert.deepEqual(page1.pagination, { total: 3, limit: 2, offset: 0, hasMore: true });
@@ -237,9 +193,9 @@ test("source lead listing paginates all results in descending referral ID order 
 });
 
 test("listing supports legacy optional columns, plain notes, and referrals without a linked lead customer", async () => {
+  const saved = await seedLead(input("Meta Ads Leon", null));
   await db.exec("ALTER TABLE referral DROP COLUMN assigned_agent, DROP COLUMN project_type, DROP COLUMN lead_state, DROP COLUMN lead_city, DROP COLUMN lead_address");
   try {
-    const saved = await createApiLead(input("Meta Ads Leon", null), execute);
     const query = { referrer: "Meta Ads Leon", limit: 100, offset: 0 };
     const [lead] = (await listApiLeads(query, execute)).leads;
     assert.equal(lead.leadState, "Selangor");
@@ -258,7 +214,7 @@ test("listing supports legacy optional columns, plain notes, and referrals witho
 });
 
 test("authenticated GET handler retrieves stored source leads through the SQL executor", async () => {
-  const saved = await createApiLead(input("Google Ads Gan"), execute);
+  const saved = await seedLead(input("Google Ads Gan"));
   const handler = createListLeadsApiHandler({ getApiKey: () => "test-key", listLeads: (query) => listApiLeads(query, execute) });
   const response = await handler(new Request("http://localhost/api/leads?referrer=google%20ads%20gan&limit=1", {
     headers: { Authorization: "Bearer test-key" },

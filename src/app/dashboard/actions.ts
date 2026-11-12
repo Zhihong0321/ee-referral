@@ -14,7 +14,6 @@ import {
   type ProjectTypeOption,
   type RelationshipOption,
   type ReferralStatus,
-  createReferral,
   findOrCreateReferrerAccount,
   updateReferral,
   updateReferralManagerWorkflow,
@@ -113,33 +112,6 @@ async function requireManagerUser() {
   }
 
   return internalUser;
-}
-
-export async function addReferralAction(formData: FormData) {
-  try {
-    const referrer = await getActionReferrer(formData);
-    const relationship = normalizeRelationship(String(formData.get("relationship") ?? ""));
-    const projectType = normalizeProjectType(String(formData.get("projectType") ?? ""));
-
-    await createReferral(referrer, {
-      leadName: String(formData.get("leadName") ?? ""),
-      leadMobileNumber: String(formData.get("leadMobileNumber") ?? ""),
-      leadState: String(formData.get("leadState") ?? formData.get("livingRegion") ?? ""),
-      leadCity: String(formData.get("leadCity") ?? ""),
-      leadAddress: String(formData.get("leadAddress") ?? ""),
-      relationship,
-      projectType,
-      preferredAgentId: String(formData.get("preferredAgentId") ?? ""),
-      remark: String(formData.get("remark") ?? ""),
-    });
-
-    revalidatePath("/dashboard");
-    redirect(getRedirectUrl("/dashboard", formData, "success=Referral+added"));
-  } catch (error) {
-    if (isRedirectError(error)) throw error;
-    const message = toErrorMessage(error);
-    redirect(getRedirectUrl("/dashboard", formData, `error=${encodeURIComponent(message)}`));
-  }
 }
 
 export async function unlockUserAssistModeAction(formData: FormData) {

@@ -154,7 +154,7 @@ export default function ApiDocsPage() {
             <ol className="mt-4 list-decimal space-y-3 pl-5 text-sm leading-7 text-slate-700">
               <li>Obtain the existing <code>LEADS_API_KEY</code> from the administrator and configure it as a backend environment secret.</li>
               <li>Call <code>GET /api/leads/sources</code> and <code>GET /api/leads/agents</code>. Select real returned source and agent IDs; <code>USER_BUBBLE_ID</code> in examples is a placeholder.</li>
-              <li>For a real incoming lead, call <code>POST /api/leads</code> with <code>leadName</code>, <code>leadMobileNumber</code>, and <code>referrer</code>. Add <code>assignedAgentId</code> to assign it, or omit the field to leave it pending. Save the returned IDs.</li>
+              <li><code>POST /api/leads</code> is <strong>retired</strong> and returns <code>410 LEAD_METHOD_RETIRED</code>. Leads can only be added through the webchat at <a href="https://referral.atap.solar/webchat" className="font-semibold text-teal-800 underline">https://referral.atap.solar/webchat</a>.</li>
               <li>Call <code>GET /api/leads</code> with the source name or ID as <code>referrer</code>. Page through results until <code>pagination.hasMore</code> is false.</li>
             </ol>
             <CodeBlock label="Minimum creation payload · creates an unassigned lead">{JSON.stringify(minimalLeadExample, null, 2)}</CodeBlock>

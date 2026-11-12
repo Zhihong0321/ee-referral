@@ -66,8 +66,8 @@ export const leadApiOpenApi = {
     },
     "/api/leads": {
       post: {
-        operationId: "createLead", tags: ["Leads"], summary: "Create a lead with Introducer and optional assignment",
-        description: "Requires leadName, leadMobileNumber, referrer. Omit assignedAgentId for Pending/null assignment; a valid assignment returns Assigned and the user's Bubble ID. A bare referrer string resolves a known/existing source ID, otherwise creates/reuses a named source. Use {customerId} for an existing person or source; unknown account IDs in that object are rejected. Do not invent source IDs. Optional fields must be omitted rather than null. Unknown fields are rejected. Each successful POST creates a new customer lead and workflow, even for repeated phones; no idempotency-key support or deduplication. Source, lead, workflow, audit save atomically. Sends no WhatsApp notification.",
+        operationId: "createLead", deprecated: true, tags: ["Leads"], summary: "RETIRED: create a lead (use the webchat)",
+        description: "RETIRED. This endpoint always returns 410 LEAD_METHOD_RETIRED and writes nothing. Leads may only be added through the webchat: https://referral.atap.solar/webchat. Historical description follows. Requires leadName, leadMobileNumber, referrer. Omit assignedAgentId for Pending/null assignment; a valid assignment returns Assigned and the user's Bubble ID. A bare referrer string resolves a known/existing source ID, otherwise creates/reuses a named source. Use {customerId} for an existing person or source; unknown account IDs in that object are rejected. Do not invent source IDs. Optional fields must be omitted rather than null. Unknown fields are rejected. Each successful POST creates a new customer lead and workflow, even for repeated phones; no idempotency-key support or deduplication. Source, lead, workflow, audit save atomically. Sends no WhatsApp notification.",
         requestBody: { required: true, content: { "application/json": {
           schema: ref("CreateLeadInput"),
           examples: { unassigned: { summary: "Minimum request; Pending", value: minimalLeadExample }, assigned: { summary: "Replace USER_BUBBLE_ID with a returned agent id", value: assignedLeadExample } },
@@ -75,6 +75,7 @@ export const leadApiOpenApi = {
         responses: {
           "201": jsonResponse("Lead created. Persist both returned IDs in the caller's submission ledger.", object({ lead: ref("CreatedLead") }), { lead: createdLeadExample }),
           "400": jsonResponse("INVALID_JSON or INVALID_INPUT. Payload validation may include issues with field paths.", ref("Error"), { error: "Invalid lead payload.", code: "INVALID_INPUT", issues: [{ path: "leadName", message: "Lead name is required." }] }),
+          "410": errorResponse("LEAD_METHOD_RETIRED: add leads through the webchat instead.", "LEAD_METHOD_RETIRED"),
           "415": errorResponse("Send Content-Type: application/json.", "INVALID_CONTENT_TYPE"),
           "422": errorResponse("INVALID_AGENT or INVALID_REFERRER: correct the agent or existing account ID.", "INVALID_AGENT"),
           ...commonErrors,

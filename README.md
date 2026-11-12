@@ -64,7 +64,7 @@ The Lead API provides four authenticated endpoints configured via `LEADS_API_KEY
 
 - `GET /api/leads/sources` (or `GET /api/leads/ads`): Lists available ad accounts and lead sources (e.g. `Meta Ads Leon`, `Google Ads Gan`, `Facebook Ads`, `Google Ads`) with their IDs.
 - `GET /api/leads/agents` (or `GET /api/agents`): Lists available sales agents (`access_level` containing `sales`) to assign leads to.
-- `POST /api/leads`: Ingests incoming leads, associates them with the selected ad account or referrer, and assigns them to a sales user.
+- `POST /api/leads`: **Retired.** Returns `410 LEAD_METHOD_RETIRED`. Leads may only be added through the webchat (https://referral.atap.solar/webchat) so every lead is written by one method.
 - `GET /api/leads?referrer=Meta%20Ads%20Leon`: Retrieves leads by source name or ID with `limit`/`offset` pagination. Omit `referrer` for all source-account leads.
 
 Public documentation is served at `/api-docs` without login and linked from the

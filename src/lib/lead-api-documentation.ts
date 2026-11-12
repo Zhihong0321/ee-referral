@@ -96,7 +96,7 @@ All API responses are JSON with Cache-Control: no-store. The caller needs HTTPS 
 
 1. GET /api/leads/sources -> 200 { sources: [{ id, name, type }], ads: [...] }. ads is the subset of sources with type=ads, not a second page. Configured defaults are returned even before they have leads. Aliases: GET /api/leads/ads and GET /api/sources.
 2. GET /api/leads/agents -> 200 { agents: [{ id, name, bubbleId, numericId, accessLevels }] }. Prefer the returned id for assignedAgentId. On the normal schema agents have an access level containing sales; a legacy database without access_level cannot enforce that filter. An empty list means leave the lead unassigned or contact the administrator. Alias: GET /api/agents.
-3. POST /api/leads -> 201 { lead: {...} }. A real write: submit only when an actual lead should be created.
+3. POST /api/leads -> RETIRED. Always 410 LEAD_METHOD_RETIRED; nothing is written. Leads may only be added through the webchat: https://referral.atap.solar/webchat
 4. GET /api/leads?referrer=Meta%20Ads%20Leon&limit=100&offset=0 -> 200 { leads: [...], pagination: { total, limit, offset, hasMore } }.
 
 ### Create a lead

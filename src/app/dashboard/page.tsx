@@ -3,7 +3,6 @@ import { redirect } from "next/navigation";
 import type { ReactNode } from "react";
 
 import {
-  addReferralAction,
   editReferralAction,
   lockUserAssistModeAction,
   unlockUserAssistModeAction,
@@ -13,6 +12,7 @@ import {
 import AgentSearchField from "@/components/agent-search-field";
 import { getCurrentAuthUser, isUserAssistUnlocked } from "@/lib/auth";
 import { findInternalAppUser, hasAnyAccessLevel } from "@/lib/internal-users";
+import { ALLOWED_LEAD_URL } from "@/lib/lead-write-policy";
 import {
   PROJECT_TYPE_OPTIONS,
   REFERRAL_STATUSES,
@@ -661,123 +661,14 @@ async function renderReferrerDashboard(
           <section className="hero-reveal hero-delay mt-6 rounded-2xl border border-slate-200 bg-white p-6 sm:p-8">
             <h2 className="text-xl font-semibold text-slate-900">Add Referral Lead (Potential Contact)</h2>
             <p className="mt-2 text-sm text-slate-600">
-              Enter the lead (potential contact) details, location, relationship, project type, and your preferred handling agent.
+              Leads are now added through the webchat only. Open the webchat and choose Add Lead.
             </p>
-
-            <form action={addReferralAction} className="mt-5 grid gap-4 md:grid-cols-2">
-              {isAssistingUser && (
-                <>
-                  <input type="hidden" name="userAssist" value="1" />
-                  <input type="hidden" name="assistPhone" value={params.assistPhone || ""} />
-                  <input type="hidden" name="assistName" value={params.assistName || ""} />
-                </>
-              )}
-              <label className="text-sm text-slate-700">
-                Lead (potential contact) name
-                <input
-                  type="text"
-                  name="leadName"
-                  required
-                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 outline-none ring-amber-500 focus:ring"
-                  placeholder="e.g. Mr Lee"
-                />
-              </label>
-
-              <label className="text-sm text-slate-700">
-                Lead (potential contact) mobile number
-                <input
-                  type="text"
-                  name="leadMobileNumber"
-                  required
-                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 outline-none ring-amber-500 focus:ring"
-                  placeholder="e.g. 0123456789"
-                />
-              </label>
-
-              <label className="text-sm text-slate-700">
-                State
-                <input
-                  type="text"
-                  name="leadState"
-                  required
-                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 outline-none ring-amber-500 focus:ring"
-                  placeholder="e.g. Selangor"
-                />
-              </label>
-
-              <label className="text-sm text-slate-700">
-                City
-                <input
-                  type="text"
-                  name="leadCity"
-                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 outline-none ring-amber-500 focus:ring"
-                  placeholder="e.g. Shah Alam"
-                />
-              </label>
-
-              <label className="text-sm text-slate-700 md:col-span-2">
-                Address
-                <input
-                  type="text"
-                  name="leadAddress"
-                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 outline-none ring-amber-500 focus:ring"
-                  placeholder="Optional full address"
-                />
-              </label>
-
-              <label className="text-sm text-slate-700">
-                Relationship with lead (potential contact)
-                <select
-                  name="relationship"
-                  required
-                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 outline-none ring-amber-500 focus:ring"
-                  defaultValue="Friend"
-                >
-                  {RELATIONSHIP_OPTIONS.map((option) => (
-                    <option key={option} value={option}>
-                      {option}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label className="text-sm text-slate-700">
-                Project type
-                <select
-                  name="projectType"
-                  required
-                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 outline-none ring-amber-500 focus:ring"
-                  defaultValue="RESIDENTIAL (2%)"
-                >
-                  {PROJECT_TYPE_OPTIONS.map((option) => (
-                    <option key={option} value={option}>
-                      {option}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <AgentSearchField agents={agents} />
-
-              <label className="text-sm text-slate-700 md:col-span-2">
-                Remark
-                <textarea
-                  name="remark"
-                  rows={3}
-                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 outline-none ring-amber-500 focus:ring resize-none"
-                  placeholder="Optional notes or remarks about this lead (potential contact)"
-                />
-              </label>
-
-              <div className="md:col-span-2">
-                <button
-                  type="submit"
-                  className="inline-flex items-center justify-center rounded-xl bg-teal-700 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-teal-800"
-                >
-                  Save Referral
-                </button>
-              </div>
-            </form>
+            <a
+              href={ALLOWED_LEAD_URL}
+              className="mt-5 inline-flex items-center justify-center rounded-xl bg-teal-700 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-teal-800"
+            >
+              Add a lead in the webchat
+            </a>
           </section>
 
           <section className="hero-reveal hero-delay-2 mt-6 rounded-2xl border border-slate-200 bg-white p-6 sm:p-8">

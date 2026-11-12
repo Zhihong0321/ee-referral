@@ -4,7 +4,7 @@ import {
   type ReferralRow,
   type ReferrerAccount,
 } from "@/lib/referrals";
-import { writeActivityLog } from "@/lib/activity-log";
+import { RETIRED_LEAD_MESSAGE, recordRetiredLeadAttempt } from "@/lib/lead-write-policy";
 
 const REFERRAL_MARKER = "REFERRAL_ACCOUNT";
 const LEGACY_REFERRER_MARKER = "REFERRER_ACCOUNT";
@@ -313,135 +313,9 @@ export async function listSandboxReferralsByReferrer(referrerCustomerId: string)
   return rows.map((row) => buildReferralRow(row));
 }
 
-export async function createSandboxReferral(input: LeadCreateInput): Promise<{ referralId: number; referrer: ReferrerAccount }> {
-  if (!hasSandboxProxyConfig()) {
-    throw new Error("Sandbox lead creation requires SANDBOX proxy configuration in this environment.");
-  }
-
-  const referrer = await ensureSandboxReferrerByPhone(input.phone);
-  const preferredAgentRows = input.preferredAgentId?.trim()
-    ? await runProxySql<{ bubble_id: string | null }>(
-        `
-          SELECT u.bubble_id
-          FROM "user" u
-          WHERE u.bubble_id = $1
-             OR ($1 ~ '^[0-9]+$' AND u.id = $1::bigint)
-          ORDER BY CASE WHEN u.bubble_id = $1 THEN 0 ELSE 1 END, u.id
-          LIMIT 1
-        `,
-        [input.preferredAgentId.trim()],
-      )
-    : [];
-  const preferredAgentId = preferredAgentRows[0]?.bubble_id?.trim() || "";
-  const leadCustomerId = randomId("cust");
-  const referralBubbleId = randomId("reflead");
-  const metadata = JSON.stringify({
-    relationship: input.relationship,
-    projectType: input.projectType,
-    leadState: input.leadState,
-    leadCity: input.leadCity,
-    leadAddress: input.leadAddress,
-    preferredAgentId,
-    linkedReferrer: referrer.customerId,
-    syncedFromReferralPortal: true,
-    remark: input.remark,
-    createdAt: new Date().toISOString(),
-    createdBy: "agent_sandbox",
-  });
-
-  const rows = await runProxySql<{ id: number }>(
-    `
-      WITH inserted_customer AS (
-        INSERT INTO customer (
-          customer_id,
-          name,
-          phone,
-          state,
-          city,
-          address,
-          lead_source,
-          remark,
-          notes,
-          created_by,
-          updated_by
-        )
-        VALUES ($1, $2, $3, $4, NULLIF($5, ''), NULLIF($6, ''), 'referral', $7, $8, $9, $9)
-        RETURNING customer_id
-      )
-      INSERT INTO referral (
-        bubble_id,
-        linked_customer_profile,
-        name,
-        relationship,
-        mobile_number,
-        status,
-        linked_invoice,
-        project_type,
-        linked_agent
-      )
-      SELECT
-        $10,
-        $11,
-        $2,
-        $7,
-        $3,
-        'Pending',
-        inserted_customer.customer_id,
-        $12,
-        NULLIF($13, '')
-      FROM inserted_customer
-      RETURNING id
-    `,
-    [
-      leadCustomerId,
-      input.leadName,
-      input.leadMobileNumber,
-      input.leadState,
-      input.leadCity,
-      input.leadAddress,
-      input.relationship,
-      metadata,
-      referrer.customerId,
-      referralBubbleId,
-      referrer.customerId,
-      input.projectType,
-      preferredAgentId,
-    ],
-  );
-
-  const referralId = rows[0].id;
-  await writeActivityLog((text, params) => runProxySql(text, params), {
-    action: "create",
-    actor: {
-      kind: "visitor",
-      ref: referrer.customerId,
-      name: referrer.name,
-      role: "agent_sandbox_referrer",
-    },
-    entityId: referralId,
-    entityLabel: input.leadName,
-    description: "Referral created through the agent sandbox.",
-    fields: [
-      "leadName",
-      "leadMobileNumber",
-      "leadState",
-      "leadCity",
-      "leadAddress",
-      "relationship",
-      "projectType",
-      "preferredAgentId",
-      "remark",
-    ],
-    metadata: {
-      channel: "agent_sandbox",
-      referrerCustomerId: referrer.customerId,
-      referral: input,
-    },
-    sourceUrl: "/api/agent-sandbox/chat",
-  });
-
-  return {
-    referralId,
-    referrer,
-  };
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export async function createSandboxReferral(_input: LeadCreateInput): Promise<{ referralId: number; referrer: ReferrerAccount }> {
+  // Retired: the webchat is the only allowed add-lead method (see lead-write-policy.ts).
+  recordRetiredLeadAttempt("sandbox");
+  throw new Error(RETIRED_LEAD_MESSAGE);
 }

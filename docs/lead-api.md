@@ -9,10 +9,12 @@ Discovery links are also available at https://referral.atap.solar/llms.txt.
 Use documentation from the same deployed server as the API; confirm the deployment
 with the administrator if a documented operation returns 404/405.
 
+> **Notice:** adding leads is webchat-only (https://referral.atap.solar/webchat). The create endpoint below is retired.
+
 The Lead API provides four endpoints:
 1. `GET /api/leads/sources` (or `GET /api/leads/ads`): Lists available ad accounts and lead sources (e.g. `Meta Ads Leon`, `Google Ads Gan`, `Facebook Ads`, `Google Ads`) with their IDs.
 2. `GET /api/leads/agents` (or `GET /api/agents`): Lists available sales agents (users with a tag containing `sales` in `access_level`) so the caller knows who can be assigned.
-3. `POST /api/leads`: Creates a customer lead and its referral workflow record. The introducer can be an ad source account or an existing person's referral account.
+3. `POST /api/leads`: **Retired.** Returns `410 LEAD_METHOD_RETIRED` and writes nothing. Leads may only be added through the webchat: https://referral.atap.solar/webchat
 4. `GET /api/leads`: Retrieves leads by referrer source name or ID, with pagination.
 
 ## Quick start for an integration

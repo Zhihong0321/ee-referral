@@ -5,6 +5,7 @@ import type { AuthHubUser } from "@/lib/auth";
 import { type ActivityLogActor, writeActivityLog } from "@/lib/activity-log";
 import { getPool, query } from "@/lib/db";
 import { PROJECT_TYPE_OPTIONS, RELATIONSHIP_OPTIONS } from "@/lib/referral-options";
+import { RETIRED_LEAD_MESSAGE, recordRetiredLeadAttempt } from "@/lib/lead-write-policy";
 
 export { PROJECT_TYPE_OPTIONS, RELATIONSHIP_OPTIONS } from "@/lib/referral-options";
 
@@ -388,7 +389,7 @@ function salesUserIdSelect(
     return `NULLIF(BTRIM(${column}), '') AS ${alias}`;
   }
 
-  return `COALESCE(${joinAlias}.bubble_id, NULLIF(BTRIM(${column}), '')) AS ${alias}`;
+  return `${joinAlias}.bubble_id AS ${alias}`;
 }
 
 function salesUserNameSelect(
@@ -965,174 +966,15 @@ export async function listAgentOptions(): Promise<AgentOption[]> {
   }));
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 export async function createReferral(
-  referrer: ReferrerAccount,
-  input: z.input<typeof referralInputSchema>,
+  _referrer: ReferrerAccount,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  _input: z.input<typeof referralInputSchema>,
 ): Promise<void> {
-  const parsed = referralInputSchema.safeParse(input);
-
-  if (!parsed.success) {
-    throw new ReferralError(parsed.error.issues[0]?.message || "Invalid referral input");
-  }
-
-  const pool = getPool();
-  const client = await pool.connect();
-
-  try {
-    await client.query("BEGIN");
-
-    const capabilities = await getCustomerCapabilities(client);
-    const leadCustomerId = randomId("cust");
-    const referralBubbleId = randomId("reflead");
-    const preferredAgentId = await normalizeAgentId(client, parsed.data.preferredAgentId, "Preferred agent");
-    const metadata = {
-      relationship: parsed.data.relationship,
-      projectType: parsed.data.projectType,
-      leadState: parsed.data.leadState,
-      leadCity: parsed.data.leadCity,
-      leadAddress: parsed.data.leadAddress,
-      preferredAgentId,
-      linkedReferrer: referrer.customerId,
-      syncedFromReferralPortal: true,
-      remark: parsed.data.remark || "",
-      createdAt: new Date().toISOString(),
-    };
-
-    const customerColumns = [
-      "customer_id",
-      "name",
-      "phone",
-      "state",
-      "city",
-      "address",
-      "lead_source",
-      "remark",
-      "notes",
-      "created_by",
-      "updated_by",
-    ];
-    const customerValues: unknown[] = [
-      leadCustomerId,
-      parsed.data.leadName,
-      parsed.data.leadMobileNumber,
-      parsed.data.leadState,
-      parsed.data.leadCity || null,
-      parsed.data.leadAddress || null,
-      "referral",
-      parsed.data.relationship,
-      JSON.stringify(metadata),
-      referrer.customerId,
-      referrer.customerId,
-    ];
-
-    if (capabilities.hasLinkedReferrer) {
-      customerColumns.push("linked_referrer");
-      customerValues.push(referrer.customerId);
-    }
-
-    await client.query(
-      `
-        INSERT INTO customer (${customerColumns.join(", ")})
-        VALUES (${customerValues.map((_, index) => `$${index + 1}`).join(", ")})
-      `,
-      customerValues,
-    );
-
-    const referralColumns = [
-      "bubble_id",
-      "linked_customer_profile",
-      "name",
-      "relationship",
-      "mobile_number",
-      "status",
-      "linked_invoice",
-    ];
-    const referralValues: unknown[] = [
-      referralBubbleId,
-      referrer.customerId,
-      parsed.data.leadName,
-      parsed.data.relationship,
-      parsed.data.leadMobileNumber,
-      "Pending",
-      leadCustomerId,
-    ];
-
-    if (capabilities.hasReferralProjectType) {
-      referralColumns.push("project_type");
-      referralValues.push(parsed.data.projectType);
-    }
-
-    if (capabilities.hasReferralLinkedAgent) {
-      referralColumns.push("linked_agent");
-      referralValues.push(preferredAgentId);
-    }
-
-    if (capabilities.hasReferralLeadState) {
-      referralColumns.push("lead_state");
-      referralValues.push(parsed.data.leadState);
-    }
-
-    if (capabilities.hasReferralLeadCity) {
-      referralColumns.push("lead_city");
-      referralValues.push(parsed.data.leadCity || null);
-    }
-
-    if (capabilities.hasReferralLeadAddress) {
-      referralColumns.push("lead_address");
-      referralValues.push(parsed.data.leadAddress || null);
-    }
-
-    const insertedReferral = await client.query<{ id: number }>(
-      `
-        INSERT INTO referral (${referralColumns.join(", ")})
-        VALUES (${referralValues.map((_, index) => `$${index + 1}`).join(", ")})
-        RETURNING id
-      `,
-      referralValues,
-    );
-
-    await writeActivityLog((text, params) => client.query(text, params), {
-      action: "create",
-      actor: {
-        kind: "visitor",
-        ref: referrer.customerId,
-        name: referrer.name,
-        role: "referrer",
-      },
-      entityId: insertedReferral.rows[0].id,
-      entityLabel: parsed.data.leadName,
-      description: "Referral created from the dashboard.",
-      fields: [
-        "leadName",
-        "leadMobileNumber",
-        "leadState",
-        "leadCity",
-        "leadAddress",
-        "relationship",
-        "projectType",
-        "preferredAgentId",
-        "remark",
-      ],
-      metadata: {
-        channel: "dashboard",
-        referrerCustomerId: referrer.customerId,
-        referral: parsed.data,
-      },
-      sourceUrl: "/dashboard",
-    });
-
-    await client.query("COMMIT");
-  } catch (error) {
-    await client.query("ROLLBACK");
-
-    if (error instanceof ReferralError) {
-      throw error;
-    }
-
-    throw new ReferralError("Unable to add this referral right now.");
-  } finally {
-    client.release();
-  }
+  // Retired: the webchat is the only allowed add-lead method (see lead-write-policy.ts).
+  recordRetiredLeadAttempt("dashboard");
+  throw new ReferralError(RETIRED_LEAD_MESSAGE);
 }
 
 async function updateLeadRecord(
