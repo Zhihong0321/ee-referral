@@ -5,14 +5,14 @@ import BonusCountdown from "@/components/bonus-countdown";
 
 const STEPS = [
   {
-    title: "1. Sign In With WhatsApp",
+    title: "1. Open The Referral Chat",
     description:
-      "You log in once through Auth Hub at auth.atap.solar. Your secure auth cookie returns you to the referral dashboard.",
+      "Open the referral chat and enter your phone number. The chat is the only place to add and manage your leads.",
   },
   {
     title: "2. Submit A Lead (Potential Contact)",
     description:
-      "Submit the lead (potential contact) name, mobile number, location details, relationship, and your preferred handling agent.",
+      "In the chat, choose Add Lead and enter the lead (potential contact) name, mobile number, area, and your preferred handling agent.",
   },
   {
     title: "3. Track Lead (Potential Contact) Status",
@@ -38,28 +38,21 @@ export default function Home() {
         <BonusCountdown />
         <p className="hero-reveal hero-delay mt-4 max-w-2xl text-base leading-7 text-slate-700 sm:text-lg">
           Bring us qualified leads (potential contacts) and we reward you with up to {REFERRAL_FEE_RATE} commission. {REFERRAL_FEE_RULE_SUMMARY}{" "}
-          {REFERRAL_PAYOUT_RULE} Start by signing in with your WhatsApp account, then submit and manage referrals from
-          one dashboard.
+          {REFERRAL_PAYOUT_RULE} Start in the referral chat, then submit and manage your leads there.
         </p>
 
         <div className="hero-reveal hero-delay-2 mt-7 flex flex-col gap-3 sm:flex-row">
           <Link
-            href="/auth/start?return_to=/dashboard"
+            href="/webchat"
             className="inline-flex items-center justify-center rounded-xl bg-amber-600 px-6 py-3 text-sm font-semibold text-white transition hover:bg-amber-700"
           >
-            Sign In With WhatsApp
+            Chat With Referral Assistant
           </Link>
           <Link
             href="/dashboard"
             className="inline-flex items-center justify-center rounded-xl border border-slate-300 bg-white px-6 py-3 text-sm font-semibold text-slate-800 transition hover:border-slate-400"
           >
             Open Dashboard
-          </Link>
-          <Link
-            href="/webchat"
-            className="inline-flex items-center justify-center rounded-xl border border-slate-300 bg-white px-6 py-3 text-sm font-semibold text-slate-800 transition hover:border-slate-400"
-          >
-            Chat With Referral Assistant
           </Link>
           <Link
             href="/guide"
@@ -95,11 +88,10 @@ export default function Home() {
           <li>Company legal name: {COMPANY_LEGAL_NAME}.</li>
           <li>Commission rate: {REFERRAL_FEE_RULE_SUMMARY}</li>
           <li>Payout timing: {REFERRAL_PAYOUT_RULE}</li>
-          <li>WhatsApp sign-in is mandatory before creating a referral account.</li>
           <li>Lead (potential contact) location can include state, city, and address details.</li>
           <li>
-            The dashboard supports profile updates, adding referrals, and editing your own lead (potential contact)
-            details.
+            Leads are added through the referral chat. The dashboard supports profile updates and editing your own
+            lead (potential contact) details.
           </li>
         </ul>
       </section>

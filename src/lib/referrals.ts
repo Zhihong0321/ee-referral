@@ -966,8 +966,8 @@ export async function listAgentOptions(): Promise<AgentOption[]> {
   }));
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 export async function createReferral(
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   _referrer: ReferrerAccount,
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   _input: z.input<typeof referralInputSchema>,

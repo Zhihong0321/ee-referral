@@ -15,7 +15,7 @@ const monoFont = Source_Code_Pro({
 
 export const metadata: Metadata = {
   title: "Eternalgy Referral Program",
-  description: "Referral portal with 1% commercial and 2% residential commission via WhatsApp sign-in",
+  description: "Referral portal with 1% commercial and 2% residential commission",
   manifest: "/manifest.webmanifest",
   appleWebApp: {
     capable: true,
